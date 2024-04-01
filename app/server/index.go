@@ -8,8 +8,8 @@ import (
 )
 
 type Episode struct {
-	Name string
-	File string
+	Name string `json:"name"`
+	File string `json:"file"`
 } //	@name	Episode
 
 type Index struct {

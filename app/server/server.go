@@ -1,7 +1,6 @@
 package server
 
 import (
-	"fmt"
 	"net/http"
 )
 
@@ -28,5 +27,5 @@ func (s *Server) Start() {
 	http.HandleFunc("/health", s.Health)
 	http.HandleFunc("/records", s.Index)
 	http.HandleFunc("/", specification)
-	http.ListenAndServe(fmt.Sprintf(":%s", s.port), nil) //nolint:errcheck,gosec
+	http.ListenAndServe(":"+s.port, nil) //nolint:errcheck,gosec
 }
