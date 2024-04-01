@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,7 +23,7 @@ func NewClient(stream, site string) *Client {
 	}
 }
 
-var ErrNotFound = fmt.Errorf("not found")
+var ErrNotFound = errors.New("not found")
 
 func (c *Client) FetchLatest(ctx context.Context) (string, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.SiteAPIUrl, http.NoBody)

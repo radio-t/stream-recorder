@@ -10,7 +10,7 @@ definitions:
     properties:
       apiVersion:
         description: Version - public version of the service. (API version).
-        example: "1"
+        example: '1'
         type: string
       description:
         description: Description - a human-friendly description of the service.
@@ -63,7 +63,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/Health'
@@ -76,9 +76,9 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/Index'
       summary: Records list
-swagger: "2.0"
+swagger: '2.0'
