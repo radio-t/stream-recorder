@@ -1,0 +1,14 @@
+services:
+  streamrecorder:
+    build: .
+    container_name: streamrecorder
+
+    ports:
+      - 8080:8080
+
+    volumes:
+      - ./records:/records
+
+    command: >
+      --port 8080
+      --dir /records
