@@ -11,19 +11,21 @@ import (
 	"time"
 )
 
-const BITRATE = 128
+const buffer = 128
 
+// Recorder records a
 type Recorder struct {
 	dir string
 }
 
+// NewRecorder creates a new recorder
 func NewRecorder(dir string) *Recorder {
 	return &Recorder{
 		dir: dir,
 	}
 }
 
-func (r *Recorder) PrepareFile(episode string) (*os.File, error) {
+func (r *Recorder) prepareFile(episode string) (*os.File, error) {
 	fileDir := path.Join(r.dir, episode)
 
 	_, err := os.Stat(fileDir)
@@ -37,7 +39,7 @@ func (r *Recorder) PrepareFile(episode string) (*os.File, error) {
 	fileName := "rt" + episode + "_" + time.Now().Format("2006_01_02_15_04_05") + ".mp3"
 	filePath := path.Join(fileDir, fileName)
 
-	f, err := os.Create(filePath)
+	f, err := os.Create(filePath) //nolint: gosec
 	if err != nil {
 		return nil, fmt.Errorf("failed to create file: %w", err)
 	}
@@ -45,16 +47,17 @@ func (r *Recorder) PrepareFile(episode string) (*os.File, error) {
 	return f, nil
 }
 
+// Record records a stream to a file
 func (r *Recorder) Record(_ context.Context, s *Stream) error {
-	f, err := r.PrepareFile(s.Number)
+	f, err := r.prepareFile(s.Number)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer f.Close() //nolint: errcheck
 
-	buf := make([]byte, BITRATE)
+	buf := make([]byte, buffer)
 
-	defer s.Body.Close()
+	defer s.Body.Close() //nolint: errcheck
 
 	slog.Info(fmt.Sprintf("started recording %s at %v", s.Number, time.Now().Format(time.RFC3339)))
 	for {

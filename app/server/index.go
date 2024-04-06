@@ -7,21 +7,22 @@ import (
 	"path"
 )
 
-type Episode struct {
+type episode struct {
 	Name string `json:"name"`
 	File string `json:"file"`
 }
 
-type Index struct {
-	Episodes []Episode `json:"episodes"`
+type index struct {
+	episodes []episode `json:"episodes"` //nolint:govet
 }
 
-func (i *Index) AddEpisode(name, file string) {
-	i.Episodes = append(i.Episodes, Episode{name, file})
+func (i *index) addEpisode(name, file string) {
+	i.episodes = append(i.episodes, episode{name, file})
 }
 
-func (s *Server) Index(w http.ResponseWriter, r *http.Request) {
-	index := &Index{} //nolint:exhaustruct
+// IndexHandler to view recorded episodes
+func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
+	index := &index{} //nolint:exhaustruct
 
 	dirs, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -36,7 +37,7 @@ func (s *Server) Index(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, file := range e {
-			index.AddEpisode(dir.Name(), path.Join(dir.Name(), file.Name()))
+			index.addEpisode(dir.Name(), path.Join(dir.Name(), file.Name()))
 		}
 	}
 
@@ -48,5 +49,5 @@ func (s *Server) Index(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data) //nolint:errcheck
+	w.Write(data) //nolint:errcheck,gosec
 }
