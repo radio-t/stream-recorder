@@ -5,15 +5,13 @@ import (
 	"fmt"
 	"io"
 	"strings"
-
-	"github.com/radio-t/stream-recorder/app/client"
 )
 
 type Listener struct {
-	client *client.Client
+	client *Client
 }
 
-func NewListener(c *client.Client) *Listener {
+func NewListener(c *Client) *Listener {
 	return &Listener{
 		client: c,
 	}

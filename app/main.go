@@ -4,14 +4,22 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/radio-t/stream-recorder/app/client"
+	"github.com/jessevdk/go-flags"
 	"github.com/radio-t/stream-recorder/app/server"
 )
+
+var opts struct {
+	Stream string `short:"s" long:"stream" env:"STREAM" default:"https://stream.radio-t.com" description:"Stream url"`
+	Site   string `long:"site" env:"SITE" default:"https://radio-t.com/site-api/last/1" description:"Radio-t API"`
+	Dir    string `short:"d" long:"dir" env:"DIR" default:"./" description:"Recording directory"`
+	Port   string `short:"p" long:"port" env:"PORT" description:"If provided app will start REST API server on the port otherwise server is disabled"`
+}
 
 //go:generate swag init  --output server/static --outputTypes yaml,json
 
@@ -24,28 +32,31 @@ func main() {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 
-	config := NewConfig()
+	if _, err := flags.Parse(&opts); err != nil {
+		slog.Error("[ERROR] failed to parse flags: %v", err)
+		os.Exit(1)
+	}
 
 	slog.Info("Starting stream-recorder", slog.String("revision", revision))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	myclient := client.NewClient(config.Stream, config.Site)
+	myclient := NewClient(opts.Stream, opts.Site)
 
-	recorder := NewRecorder(config.Dir)
+	recorder := NewRecorder(opts.Dir)
 
 	streamlistener := NewListener(myclient)
 
 	wg := sync.WaitGroup{}
 
-	if config.Port != "" {
+	if opts.Port != "" {
 		slog.Info("Healthcheck enabled")
 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s := server.NewServer(config.Port, config.Dir, revision)
+			s := server.NewServer(opts.Port, opts.Dir, revision)
 			go s.Start()
 		}()
 	}
@@ -70,7 +81,7 @@ func Run(ctx context.Context, l *Listener, r *Recorder) {
 		case <-ticker.C:
 			stream, err := l.Listen(ctx)
 			switch {
-			case errors.Is(err, client.ErrNotFound):
+			case errors.Is(err, ErrNotFound):
 				slog.Debug("stream is not available")
 
 			case err != nil:

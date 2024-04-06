@@ -10,23 +10,16 @@ import (
 type Episode struct {
 	Name string `json:"name"`
 	File string `json:"file"`
-} //	@name	Episode
+}
 
 type Index struct {
 	Episodes []Episode `json:"episodes"`
-} //	@name	Index
+}
 
 func (i *Index) AddEpisode(name, file string) {
 	i.Episodes = append(i.Episodes, Episode{name, file})
 }
 
-// Index
-//
-//	@Router			 /records [get]
-//	@Summary		 Records list
-//	@Description Provides list of recorded episodes.
-//	@Produce		 json
-//	@Success		 200	{object}	Index
 func (s *Server) Index(w http.ResponseWriter, r *http.Request) {
 	index := &Index{} //nolint:exhaustruct
 
