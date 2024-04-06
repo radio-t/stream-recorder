@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-type Status string //	@name	HealthStatus
+type Status string
 
 const (
 	Pass Status = "pass"
@@ -35,7 +35,7 @@ type Health struct {
 
 	// Description - a human-friendly description of the service.
 	Description string `json:"description"`
-} //	@name	Health
+}
 
 type HealthController struct {
 	dir string
@@ -81,14 +81,6 @@ func (h *HealthController) Check() (*Health, error) {
 	return health, nil
 }
 
-// HealthHandler
-//
-//	@Router			 /health [get]
-//	@Tags				 System
-//	@Summary		 Health Check
-//	@Description Provides information about the application health.
-//	@Produce		 json
-//	@Success		 200	{object}	Health
 func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
 	health, err := s.HealthController.Check()
 	if err != nil {
