@@ -1,3 +1,4 @@
+// methods to call SiteAPI and stream
 package main
 
 import (
@@ -9,12 +10,14 @@ import (
 	"net/http"
 )
 
+// Client is a client to call SiteAPI and stream
 type Client struct {
 	Stream     string
 	SiteAPIUrl string
 	client     *http.Client
 }
 
+// NewClient creates a new client with stream and site api urls
 func NewClient(stream, site string) *Client {
 	return &Client{
 		client:     &http.Client{}, //nolint:exhaustruct
@@ -23,8 +26,10 @@ func NewClient(stream, site string) *Client {
 	}
 }
 
+// ErrNotFound is returned when the stream is not found
 var ErrNotFound = errors.New("not found")
 
+// FetchLatest fetches the latest entry from the SiteAPI to find out the title of the stream
 func (c *Client) FetchLatest(ctx context.Context) (string, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.SiteAPIUrl, http.NoBody)
 	if err != nil {
@@ -38,7 +43,7 @@ func (c *Client) FetchLatest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("error reading response: %w", err)
 	}
-	defer res.Body.Close()
+	defer res.Body.Close() //nolint:errcheck
 	var entries []Entry
 
 	err = json.Unmarshal(body, &entries)
@@ -49,6 +54,7 @@ func (c *Client) FetchLatest(ctx context.Context) (string, error) {
 	return entries[0].Title, nil
 }
 
+// FetchStream fetches the stream body
 func (c *Client) FetchStream(_ context.Context) (io.ReadCloser, error) {
 	// context.Background is used to prevent stopping recording
 	ctx := context.Background()

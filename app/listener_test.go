@@ -2,11 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"math/rand"
-	"net/http"
-	"net/http/httptest"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,28 +12,35 @@ import (
 )
 
 func TestListener(t *testing.T) {
-	apiServer := createTestAPIServer()
-	defer apiServer.Close()
-
+	t.Parallel()
 	testcases := []struct {
-		name                 string
-		streamServerFunction func(w http.ResponseWriter, r *http.Request)
-		expected             string
-		errorFunc            assert.ErrorAssertionFunc
+		name      string
+		client    *ClientlikeMock
+		expected  string
+		errorFunc assert.ErrorAssertionFunc
 	}{
 		{
 			name: "happy test",
-			streamServerFunction: func(w http.ResponseWriter, r *http.Request) {
-				random := rand.New(rand.NewSource(0)) //nolint:gosec
-				fmt.Fprintf(w, "%d", random.Int())
+			client: &ClientlikeMock{
+				FetchLatestFunc: func(_ context.Context) (string, error) {
+					return "streamrecorderepisode test", nil
+				},
+				FetchStreamFunc: func(_ context.Context) (io.ReadCloser, error) {
+					return io.NopCloser(strings.NewReader("8717895732")), nil
+				},
 			},
 			expected:  "8717895732",
 			errorFunc: assert.NoError,
 		},
 		{
 			name: "404 test",
-			streamServerFunction: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusNotFound)
+			client: &ClientlikeMock{
+				FetchLatestFunc: func(_ context.Context) (string, error) {
+					return "streamrecorderepisode test", nil
+				},
+				FetchStreamFunc: func(_ context.Context) (io.ReadCloser, error) {
+					return nil, ErrNotFound
+				},
 			},
 			errorFunc: assert.Error,
 		},
@@ -43,12 +48,8 @@ func TestListener(t *testing.T) {
 
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			streamServer := prepareStreamServer(tc.streamServerFunction)
-			defer streamServer.Close()
-
-			c := NewClient(streamServer.URL, apiServer.URL)
-
-			l := NewListener(c)
+			t.Parallel()
+			l := NewListener(tc.client)
 
 			s, err := l.Listen(context.TODO())
 
@@ -59,7 +60,7 @@ func TestListener(t *testing.T) {
 
 			assert.NotNil(t, s.Body)
 
-			defer s.Body.Close()
+			defer s.Body.Close() //nolint:errcheck
 
 			buf := make([]byte, 10)
 			_, err = s.Body.Read(buf)
@@ -70,23 +71,4 @@ func TestListener(t *testing.T) {
 			assert.Equal(t, tc.expected, got, fmt.Sprintf(`expected stream of: %q but got: %q`, tc.expected, got))
 		})
 	}
-}
-
-func prepareStreamServer(f func(w http.ResponseWriter, r *http.Request)) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(f))
-}
-
-func createTestAPIServer() *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		testepisode := &Entry{Title: "streamrecorderepisode test"}
-		entries := []Entry{*testepisode}
-		data, err := json.Marshal(entries)
-		if err != nil {
-			w.Write([]byte(err.Error())) //nolint:errcheck
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-
-		w.WriteHeader(http.StatusOK)
-		w.Write(data) //nolint:errcheck
-	}))
 }
