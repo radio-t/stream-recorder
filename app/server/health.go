@@ -1,120 +1,62 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"os/exec"
-	"strconv"
-	"strings"
+	"path/filepath"
+	"syscall"
 )
 
-type Status string
-
-const (
-	Pass Status = "pass"
-	Fail Status = "fail"
-	Warn Status = "warn"
-)
-
-// Health is response model according to https://inadarei.github.io/rfc-healthcheck/
-type Health struct {
-	// Status indicates whether the service status is acceptable or not.
-	// - `pass`: healthy (acceptable aliases: "ok" to support Node's Terminus and "up" for Java's SpringBoot),
-	// - `fail`: unhealthy (acceptable aliases: "error" to support Node's Terminus and "down" for Java's SpringBoot), and
-	// - `warn`: healthy, with some concerns.
-	Status Status `json:"status" example:"pass" enum:"pass,fail,warn"`
-
-	// Version - public version of the service. (API version).
-	Version string `json:"apiVersion" example:"1"`
-
-	Revision string `json:"revision"`
-
-	// Notes - array of notes relevant to current state of health.
-	Notes []string `json:"notes" example:"commit hash: aee0773,uptime: 12.3s"`
-
-	// Description - a human-friendly description of the service.
-	Description string `json:"description"`
-}
-
-type HealthController struct {
-	dir string
-}
-
-func NewHealthController(dir string) *HealthController {
-	return &HealthController{
-		dir: dir,
-	}
-}
-
-func (h *Health) HTTPStatus() int {
-	switch h.Status {
-	case Pass:
-		return http.StatusOK
-	case Fail:
-		return http.StatusInternalServerError
-	case Warn:
-		return http.StatusOK
-	default:
-		return http.StatusInternalServerError
-	}
-}
-
-func (h *HealthController) Check() (*Health, error) {
+func (s *Server) checkHealth() (string, error) {
 	warncapacity := 80
-	health := &Health{} //nolint:exhaustruct
 
-	capacity, err := h.getCapacity()
+	capacity, err := s.getCapacity()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	if capacity > warncapacity {
-		health.Status = Fail
-		health.Notes = append(health.Notes, "disk is more than 80% full")
-	} else {
-		health.Status = Pass
+		return fmt.Sprintf("disk is %d%% full", capacity), nil
 	}
 
-	health.Description = fmt.Sprintf("disk capacity: %d%%", capacity)
-
-	return health, nil
+	return "", nil
 }
 
-func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
-	health, err := s.HealthController.Check()
+// Health handler for server
+func (s *Server) HealthHandler(w http.ResponseWriter, _ *http.Request) {
+	warning, err := s.checkHealth()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error())) //nolint:errcheck
 		return
 	}
 
-	data, err := json.MarshalIndent(health, "", "  ")
-	if err != nil {
+	if warning != "" {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(err.Error())) //nolint:errcheck
+		w.Write([]byte(warning)) //nolint:errcheck
 		return
 	}
 
-	w.WriteHeader(health.HTTPStatus())
-	w.Write(data) //nolint:errcheck
+	w.WriteHeader(http.StatusOK)
 }
 
-func (h *HealthController) getCapacity() (int, error) {
-	command := `df -h ` + h.dir + ` | awk 'NR==2 {gsub("%","",$5); print $5}'`
-	cmd := exec.Command("sh", "-c", command)
-	out, err := cmd.Output()
+func (s *Server) getCapacity() (int, error) {
+	stats := &syscall.Statfs_t{} //nolint:exhaustruct
+
+	abs, err := filepath.Abs(s.dir)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get capacity: %w", err)
+		return 0, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
-	output := string(out)
-	output = strings.Trim(output, " \n")
-
-	capacity, err := strconv.Atoi(output)
+	err = syscall.Statfs(abs, stats)
 	if err != nil {
-		return 0, fmt.Errorf("failed to convert capacity: %s, error: %w", output, err)
+		return 0, fmt.Errorf("failed to make Statfs call: %w, path: %s", err, s.dir)
 	}
 
-	return capacity, nil
+	onehundred := 100.0
+	blocks := float64(stats.Blocks)
+	free := float64(stats.Bfree)
+	capacity := ((blocks - free) / blocks) * onehundred
+
+	return int(capacity), nil
 }
