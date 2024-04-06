@@ -11,14 +11,15 @@ import (
 	"time"
 
 	"github.com/jessevdk/go-flags"
+
 	"github.com/radio-t/stream-recorder/app/server"
 )
 
-var opts struct {
-	Stream string `short:"s" long:"stream" env:"STREAM" default:"https://stream.radio-t.com" description:"Stream url"`
-	Site   string `long:"site" env:"SITE" default:"https://radio-t.com/site-api/last/1" description:"Radio-t API"`
-	Dir    string `short:"d" long:"dir" env:"DIR" default:"./" description:"Recording directory"`
-	Port   string `short:"p" long:"port" env:"PORT" description:"If provided app will start REST API server on the port otherwise server is disabled"`
+var opts struct { //nolint:gochecknoglobals
+	Stream string `default:"https://stream.radio-t.com"                                                              description:"Stream url"          env:"STREAM" long:"stream" short:"s"`
+	Site   string `default:"https://radio-t.com/site-api/last/1"                                                     description:"Radio-t API"         env:"SITE"   long:"site"`
+	Dir    string `default:"./"                                                                                      description:"Recording directory" env:"DIR"    long:"dir"    short:"d"`
+	Port   string `description:"If provided app will start REST API server on the port otherwise server is disabled" env:"PORT"                        long:"port"  short:"p"`
 }
 
 //go:generate swag init  --output server/static --outputTypes yaml,json
