@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/radio-t/stream-recorder/app/client"
 )
 
 func TestListener(t *testing.T) {
@@ -48,7 +47,7 @@ func TestListener(t *testing.T) {
 			streamServer := prepareStreamServer(tc.streamServerFunction)
 			defer streamServer.Close()
 
-			c := client.NewClient(streamServer.URL, apiServer.URL)
+			c := NewClient(streamServer.URL, apiServer.URL)
 
 			l := NewListener(c)
 
@@ -80,8 +79,8 @@ func prepareStreamServer(f func(w http.ResponseWriter, r *http.Request)) *httpte
 
 func createTestAPIServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		testepisode := &client.Entry{Title: "streamrecorderepisode test"}
-		entries := []client.Entry{*testepisode}
+		testepisode := &Entry{Title: "streamrecorderepisode test"}
+		entries := []Entry{*testepisode}
 		data, err := json.Marshal(entries)
 		if err != nil {
 			w.Write([]byte(err.Error())) //nolint:errcheck
