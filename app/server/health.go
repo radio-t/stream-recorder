@@ -22,18 +22,18 @@ func (s *Server) checkHealth() (string, error) {
 	return "", nil
 }
 
-// Health handler for server
+// HealthHandler for server
 func (s *Server) HealthHandler(w http.ResponseWriter, _ *http.Request) {
 	warning, err := s.checkHealth()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(err.Error())) //nolint:errcheck
+		w.Write([]byte(err.Error())) //nolint:errcheck,gosec
 		return
 	}
 
 	if warning != "" {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(warning)) //nolint:errcheck
+		w.Write([]byte(warning)) //nolint:errcheck,gosec
 		return
 	}
 
@@ -53,10 +53,11 @@ func (s *Server) getCapacity() (int, error) {
 		return 0, fmt.Errorf("failed to make Statfs call: %w, path: %s", err, s.dir)
 	}
 
-	onehundred := 100.0
-	blocks := float64(stats.Blocks)
-	free := float64(stats.Bfree)
-	capacity := ((blocks - free) / blocks) * onehundred
+	total := stats.Blocks * uint64(stats.Bsize)
+	free := stats.Bfree * uint64(stats.Bsize)
+	used := total - free
 
-	return int(capacity), nil
+	capacity := int(used * 100 / total)
+
+	return capacity, nil
 }

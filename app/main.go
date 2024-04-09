@@ -22,12 +22,8 @@ var opts struct { //nolint:gochecknoglobals
 	Port   string `description:"If provided app will start REST API server on the port otherwise server is disabled" env:"PORT"                        long:"port"  short:"p"`
 }
 
-//go:generate swag init  --output server/static --outputTypes yaml,json
-
 var revision = "local" //nolint: gochecknoglobals
 
-// @title			stream-recorder
-// @description	stream-recorder is a tool to record live streams.
 func main() {
 	if revision == "local" {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
@@ -65,13 +61,13 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		Run(ctx, streamlistener, recorder)
+		run(ctx, streamlistener, recorder)
 	}()
 
 	wg.Wait()
 }
 
-func Run(ctx context.Context, l *Listener, r *Recorder) {
+func run(ctx context.Context, l *Listener, r *Recorder) {
 	ticker := time.NewTicker(time.Second * 5) //nolint:gomnd
 	defer ticker.Stop()
 	for {

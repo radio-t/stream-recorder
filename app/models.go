@@ -2,6 +2,8 @@ package main
 
 import "time"
 
+// Entry API сайта radio-t.com https://radio-t.com/api-docs/
+//
 //nolint:tagliatelle
 type Entry struct {
 	URL        string      `json:"url"`                   // url поста
@@ -16,6 +18,7 @@ type Entry struct {
 	TimeLabels []TimeLabel `json:"time_labels,omitempty"` // массив временых меток тем
 }
 
+// TimeLabel API сайта radio-t.com https://radio-t.com/api-docs/
 type TimeLabel struct {
 	Topic    string    `json:"topic"`              // название темы
 	Time     time.Time `json:"time"`               // время начала в RFC3339
