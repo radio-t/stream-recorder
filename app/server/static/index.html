@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
+    />
+  </head>
+  <body>
+    <table>
+    <tr>
+      <th>Episode number</th>
+      <th>Files</th>
+    </tr>
+      {{range .Episodes}}
+        <tr>
+          <td colspan="2"><a href="/episode/{{ .Name }}">{{ .Name }}</a></td>
+          {{range .Files}}
+            <tr><td></td><td><a href="/record/{{ . }}">{{ . }}</a></td></tr>
+          {{end}}
+        </tr>
+        {{else}}
+          <div><strong>no rows</strong>
+      {{end}}
+    </table>
+  </body>
+</html>
