@@ -1,3 +1,4 @@
+// Main entrypoint to run stream-recorder
 package main
 
 import (
@@ -12,6 +13,7 @@ import (
 
 	"github.com/jessevdk/go-flags"
 
+	"github.com/radio-t/stream-recorder/app/recorder"
 	"github.com/radio-t/stream-recorder/app/server"
 )
 
@@ -39,11 +41,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	myclient := NewClient(opts.Stream, opts.Site)
+	myclient := recorder.NewClient(opts.Stream, opts.Site)
 
-	recorder := NewRecorder(opts.Dir)
+	r := recorder.NewRecorder(opts.Dir)
 
-	streamlistener := NewListener(myclient)
+	streamlistener := recorder.NewListener(myclient)
 
 	wg := sync.WaitGroup{}
 
@@ -61,13 +63,13 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		run(ctx, streamlistener, recorder)
+		run(ctx, streamlistener, r)
 	}()
 
 	wg.Wait()
 }
 
-func run(ctx context.Context, l *Listener, r *Recorder) {
+func run(ctx context.Context, l *recorder.Listener, r *recorder.Recorder) {
 	ticker := time.NewTicker(time.Second * 5) //nolint:gomnd
 	defer ticker.Stop()
 	for {
@@ -78,7 +80,7 @@ func run(ctx context.Context, l *Listener, r *Recorder) {
 		case <-ticker.C:
 			stream, err := l.Listen(ctx)
 			switch {
-			case errors.Is(err, ErrNotFound):
+			case errors.Is(err, recorder.ErrNotFound):
 				slog.Debug("stream is not available")
 
 			case err != nil:
