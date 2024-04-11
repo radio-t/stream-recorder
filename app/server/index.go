@@ -1,53 +1,77 @@
 package server
 
 import (
-	"encoding/json"
+	"embed"
+	"fmt"
+	"html/template"
 	"net/http"
 	"os"
 	"path"
 )
 
+//go:embed static/index.html
+var indexTemplateFS embed.FS
+
 type episode struct {
-	Name string `json:"name"`
-	File string `json:"file"`
+	Name  string
+	Files []string
+}
+
+func newIndex(p string) (*index, error) {
+	i := &index{
+		Episodes: make(map[string]*episode),
+	}
+
+	dirs, err := os.ReadDir(p)
+	if err != nil {
+		return &index{}, fmt.Errorf("error reading main dir, %w", err) //nolint:exhaustruct
+	}
+
+	for _, dir := range dirs {
+		e, err := os.ReadDir(path.Join(p, dir.Name()))
+		if err != nil {
+			return &index{}, fmt.Errorf("error reading episode dir, %w", err) //nolint:exhaustruct
+		}
+		for _, file := range e {
+			i.addEpisode(dir.Name(), path.Join(dir.Name(), file.Name()))
+		}
+	}
+
+	return i, nil
 }
 
 type index struct {
-	episodes []episode `json:"episodes"` //nolint:govet
+	Episodes map[string]*episode `json:"episodes"`
 }
 
-func (i *index) addEpisode(name, file string) {
-	i.episodes = append(i.episodes, episode{name, file})
+func (i *index) addEpisode(name, p string) {
+	e, ok := i.Episodes[name]
+	if ok {
+		e.Files = append(e.Files, p)
+	} else {
+		i.Episodes[name] = &episode{
+			Name:  name,
+			Files: []string{p},
+		}
+	}
 }
 
 // IndexHandler to view recorded episodes
 func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
-	index := &index{} //nolint:exhaustruct
-
-	dirs, err := os.ReadDir(s.dir)
+	data, err := newIndex(s.dir)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	for _, dir := range dirs {
-		e, err := os.ReadDir(path.Join(s.dir, dir.Name()))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		for _, file := range e {
-			index.addEpisode(dir.Name(), path.Join(dir.Name(), file.Name()))
-		}
-	}
-
-	data, err := json.MarshalIndent(index, "", "  ")
+	t, err := template.ParseFS(indexTemplateFS, "static/index.html")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(data) //nolint:errcheck,gosec
+	if err := t.Execute(w, data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
