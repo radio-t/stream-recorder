@@ -1,4 +1,4 @@
-package main
+package recorder_test
 
 import (
 	"context"
@@ -6,17 +6,19 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/radio-t/stream-recorder/app/recorder"
 )
 
 func TestRecorder(t *testing.T) {
 	testingdir := "./test"
 	ctx := context.Background()
-	r := NewRecorder(testingdir)
+	r := recorder.NewRecorder(testingdir)
 
 	reader := strings.NewReader("asdf")
 	b := io.NopCloser(reader)
 
-	s := NewStream("rt testrecord", b)
+	s := recorder.NewStream("rt testrecord", b)
 
 	err := r.Record(ctx, s)
 	if err != nil {

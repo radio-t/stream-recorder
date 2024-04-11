@@ -23,8 +23,9 @@ func NewServer(port, dir, rev string) *Server {
 
 // Start binds endpoints with methods and starts the server
 func (s *Server) Start() {
-	http.Handle("/download/", http.StripPrefix("/download/", http.FileServer(http.Dir(s.dir))))
+	http.HandleFunc("/episode/", s.DownloadEpisodeHandler)
+	http.HandleFunc("/record/", s.DownloadRecordHandler)
 	http.HandleFunc("/health", s.HealthHandler)
-	http.HandleFunc("/records", s.IndexHandler)
+	http.HandleFunc("/", s.IndexHandler)
 	http.ListenAndServe(":"+s.port, nil) //nolint:errcheck,gosec
 }
