@@ -1,4 +1,4 @@
-package main
+package recorder_test
 
 import (
 	"context"
@@ -9,19 +9,21 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radio-t/stream-recorder/app/recorder"
 )
 
 func TestListener(t *testing.T) {
 	t.Parallel()
 	testcases := []struct {
 		name      string
-		client    *ClientlikeMock
+		client    *recorder.ClientlikeMock
 		expected  string
 		errorFunc assert.ErrorAssertionFunc
 	}{
 		{
 			name: "happy test",
-			client: &ClientlikeMock{
+			client: &recorder.ClientlikeMock{
 				FetchLatestFunc: func(_ context.Context) (string, error) {
 					return "streamrecorderepisode test", nil
 				},
@@ -34,12 +36,12 @@ func TestListener(t *testing.T) {
 		},
 		{
 			name: "404 test",
-			client: &ClientlikeMock{
+			client: &recorder.ClientlikeMock{
 				FetchLatestFunc: func(_ context.Context) (string, error) {
 					return "streamrecorderepisode test", nil
 				},
 				FetchStreamFunc: func(_ context.Context) (io.ReadCloser, error) {
-					return nil, ErrNotFound
+					return nil, recorder.ErrNotFound
 				},
 			},
 			errorFunc: assert.Error,
@@ -49,7 +51,7 @@ func TestListener(t *testing.T) {
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			l := NewListener(tc.client)
+			l := recorder.NewListener(tc.client)
 
 			s, err := l.Listen(context.TODO())
 

@@ -1,5 +1,6 @@
+// Package recorder is the main functionality for listerning and recording an audio stream
 // methods to call SiteAPI and stream
-package main
+package recorder
 
 import (
 	"context"
