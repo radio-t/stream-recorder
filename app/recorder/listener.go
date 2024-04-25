@@ -7,21 +7,21 @@ import (
 	"strings"
 )
 
-// Clientlike interface represents required methods that client should implement
+// ClientService interface represents required methods that client should implement
 //
-//go:generate moq -out clientlike_moq_test.go . Clientlike
-type Clientlike interface {
+//go:generate moq -out clientservice_moq_test.go . ClientService
+type ClientService interface {
 	FetchLatest(ctx context.Context) (string, error)
 	FetchStream(ctx context.Context) (io.ReadCloser, error)
 }
 
 // Listener represents a listener
 type Listener struct {
-	client Clientlike
+	client ClientService
 }
 
 // NewListener creates new listener
-func NewListener(c Clientlike) *Listener {
+func NewListener(c ClientService) *Listener {
 	return &Listener{
 		client: c,
 	}
