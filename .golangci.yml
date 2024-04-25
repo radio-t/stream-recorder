@@ -133,19 +133,6 @@ linters-settings:
     custom-order: true
   revive:
 
-  tagalign:
-    order:
-    - validate
-    - koanf
-    - json
-    - yaml
-    - yml
-    - toml
-    - enums
-    - mapstructure
-    - binding
-    - example
-
 issues:
   exclude-rules:
   - path: (.+)_test.go
