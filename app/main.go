@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -41,11 +42,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	myclient := recorder.NewClient(opts.Stream, opts.Site)
+	c := recorder.NewClient(http.DefaultClient, opts.Stream, opts.Site)
 
 	r := recorder.NewRecorder(opts.Dir)
 
-	streamlistener := recorder.NewListener(myclient)
+	streamlistener := recorder.NewListener(c)
 
 	wg := sync.WaitGroup{}
 
