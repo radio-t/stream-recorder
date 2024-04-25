@@ -156,4 +156,5 @@ issues:
   - vendor
   exclude-files:
   - (.+)moq_test.go
+  - (.+)moq.go
   exclude-use-default: false
