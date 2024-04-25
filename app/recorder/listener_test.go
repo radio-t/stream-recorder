@@ -16,13 +16,13 @@ func TestListener(t *testing.T) {
 	t.Parallel()
 	testcases := []struct {
 		name      string
-		client    *recorder.ClientlikeMock
+		client    recorder.ClientService
 		expected  string
 		errorFunc assert.ErrorAssertionFunc
 	}{
 		{
 			name: "happy test",
-			client: &recorder.ClientlikeMock{
+			client: &recorder.ClientServiceMock{
 				FetchLatestFunc: func(_ context.Context) (string, error) {
 					return "streamrecorderepisode test", nil
 				},
@@ -35,7 +35,7 @@ func TestListener(t *testing.T) {
 		},
 		{
 			name: "404 test",
-			client: &recorder.ClientlikeMock{
+			client: &recorder.ClientServiceMock{
 				FetchLatestFunc: func(_ context.Context) (string, error) {
 					return "streamrecorderepisode test", nil
 				},
