@@ -6,7 +6,7 @@ build: ## build application
 	go build -C ./app -o ../streamrecorder
 
 local: ## run local
-	go run ./app --stream 'http://localhost:8000/stream.mp3' --port 8080 --dir ./records
+	go run ./app --stream 'http://localhost:8000/stream.mp3' --port 8080 --dir ./records --dbg
 
 clean: ## clean records
 	rm -rf ./records

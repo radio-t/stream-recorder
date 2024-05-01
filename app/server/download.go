@@ -34,7 +34,7 @@ func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) 
 	fs := os.DirFS(path.Join(s.dir, folder))
 
 	writer := zip.NewWriter(w)
-	defer writer.Close() //nolint: errcheck
+	defer writer.Close()
 
 	err := writer.AddFS(fs)
 	if err != nil {
