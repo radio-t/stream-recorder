@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
@@ -18,23 +17,25 @@ import (
 	"github.com/radio-t/stream-recorder/app/server"
 )
 
-var opts struct { //nolint:gochecknoglobals
+var opts struct {
 	Stream string `default:"https://stream.radio-t.com" description:"Stream url" env:"STREAM" long:"stream" short:"s"`
 	Site   string `default:"https://radio-t.com/site-api/last/1" description:"Radio-t API" env:"SITE" long:"site"`
 	Dir    string `default:"./" description:"Recording directory" env:"DIR" long:"dir" short:"d"`
 	Port   string `description:"If provided will start API server on the port otherwise server is disabled" env:"PORT" long:"port" short:"p"`
+	Debug  bool   `description:"Enable debug logging" env:"DEBUG" long:"dbg" short:"D"`
 }
 
-var revision = "local" //nolint: gochecknoglobals
+var revision = "local"
 
 func main() {
-	if revision == "local" {
-		slog.SetLogLoggerLevel(slog.LevelDebug)
-	}
-
 	if _, err := flags.Parse(&opts); err != nil {
 		slog.Error("[ERROR] failed to parse flags: %v", err)
 		os.Exit(1)
+	}
+
+	if opts.Debug {
+		slog.Info("debug mode")
+		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 
 	slog.Info("Starting stream-recorder", slog.String("revision", revision))
@@ -44,34 +45,31 @@ func main() {
 
 	c := recorder.NewClient(http.DefaultClient, opts.Stream, opts.Site)
 
-	r := recorder.NewRecorder(opts.Dir)
-
-	streamlistener := recorder.NewListener(c)
-
-	wg := sync.WaitGroup{}
+	l := recorder.NewListener(c)
 
 	if opts.Port != "" {
 		slog.Info("Healthcheck enabled")
 
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
 			s := server.NewServer(opts.Port, opts.Dir, revision)
-			go s.Start()
+			err := s.Start(ctx)
+
+			if err != nil {
+				slog.Error("Server", err)
+				cancel()
+			}
+
+			if err = s.Stop(ctx); err != nil {
+				slog.Error("Server stopping error", err)
+			}
 		}()
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		run(ctx, streamlistener, r)
-	}()
-
-	wg.Wait()
+	run(ctx, l, recorder.NewRecorder(opts.Dir))
 }
 
 func run(ctx context.Context, l *recorder.Listener, r *recorder.Recorder) {
-	ticker := time.NewTicker(time.Second * 5) //nolint:gomnd
+	ticker := time.NewTicker(time.Second * 5)
 	defer ticker.Stop()
 	for {
 		select {

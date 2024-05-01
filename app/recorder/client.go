@@ -12,7 +12,6 @@ import (
 )
 
 // HTTPClient interface to make HTTP requests
-//
 //go:generate moq -out httpclient_moq.go . HTTPClient
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -51,7 +50,7 @@ func (c *Client) FetchLatest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("error reading response: %w", err)
 	}
-	defer res.Body.Close() //nolint:errcheck
+	defer res.Body.Close()
 	var entries []Entry
 
 	err = json.Unmarshal(body, &entries)

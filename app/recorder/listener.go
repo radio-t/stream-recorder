@@ -29,7 +29,7 @@ func NewListener(c ClientService) *Listener {
 
 func getStreamNumber(latest string) string {
 	args := strings.Split(latest, " ")
-	if len(args) < 2 { //nolint:gomnd
+	if len(args) < 2 {
 		return "0"
 	}
 	return args[1]
