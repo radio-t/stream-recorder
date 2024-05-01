@@ -62,7 +62,7 @@ func TestListener(t *testing.T) {
 
 			assert.NotNil(t, s.Body)
 
-			defer s.Body.Close() //nolint:errcheck
+			defer s.Body.Close()
 
 			buf := make([]byte, 10)
 			_, err = s.Body.Read(buf)
