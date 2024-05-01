@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"syscall"
@@ -27,13 +28,19 @@ func (s *Server) HealthHandler(w http.ResponseWriter, _ *http.Request) {
 	warning, err := s.checkHealth()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(err.Error())) //nolint:errcheck,gosec
+		_, err = w.Write([]byte(err.Error()))
+		if err != nil {
+			slog.Error("error writing response:", slog.String("", err.Error()))
+		}
 		return
 	}
 
 	if warning != "" {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(warning)) //nolint:errcheck,gosec
+		_, err := w.Write([]byte(warning))
+		if err != nil {
+			slog.Error("error writing response:", slog.String("", err.Error()))
+		}
 		return
 	}
 
@@ -41,7 +48,7 @@ func (s *Server) HealthHandler(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) getCapacity() (int, error) {
-	stats := &syscall.Statfs_t{} //nolint:exhaustruct
+	stats := &syscall.Statfs_t{}
 
 	abs, err := filepath.Abs(s.dir)
 	if err != nil {
