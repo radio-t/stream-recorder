@@ -32,7 +32,7 @@ func main() {
 	}
 
 	if _, err := flags.Parse(&opts); err != nil {
-		slog.Error("[ERROR] failed to parse flags: %v", err)
+		slog.Error("failed to parse flags", slog.String("err", err.Error()))
 		os.Exit(1)
 	}
 
@@ -84,12 +84,12 @@ func run(ctx context.Context, l *recorder.Listener, r *recorder.Recorder) {
 				slog.Debug("stream is not available")
 
 			case err != nil:
-				slog.Error("error while listening", err)
+				slog.Error("error while listening", slog.String("err", err.Error()))
 
 			default:
 				err = r.Record(ctx, stream)
 				if err != nil {
-					slog.Error("error while recording", err)
+					slog.Error("error while recording", slog.String("err", err.Error()))
 					return
 				}
 			}
