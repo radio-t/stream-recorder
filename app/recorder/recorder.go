@@ -8,8 +8,30 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"path/filepath"
 	"time"
 )
+
+// Entry API сайта radio-t.com https://radio-t.com/api-docs/
+type Entry struct {
+	URL        string      `json:"url"`                   // url поста
+	Title      string      `json:"title"`                 // заголовок поста
+	Date       time.Time   `json:"date"`                  // дата-время поста в RFC3339
+	Categories []string    `json:"categories"`            // список категорий, массив строк
+	Image      string      `json:"image,omitempty"`       // url картинки
+	FileName   string      `json:"file_name,omitempty"`   // имя файла
+	Body       string      `json:"body,omitempty"`        // тело поста в HTML
+	ShowNotes  string      `json:"show_notes,omitempty"`  // пост в текстовом виде
+	AudioURL   string      `json:"audio_url,omitempty"`   // url аудио файла
+	TimeLabels []TimeLabel `json:"time_labels,omitempty"` // массив временых меток тем
+}
+
+// TimeLabel API сайта radio-t.com https://radio-t.com/api-docs/
+type TimeLabel struct {
+	Topic    string    `json:"topic"`              // название темы
+	Time     time.Time `json:"time"`               // время начала в RFC3339
+	Duration int       `json:"duration,omitempty"` // длительность в секундах
+}
 
 const buffer = 128
 
@@ -25,39 +47,27 @@ func NewRecorder(dir string) *Recorder {
 	}
 }
 
-func (r *Recorder) prepareFile(episode string) (*os.File, error) {
-	fileDir := path.Join(r.dir, episode)
-
-	_, err := os.Stat(fileDir)
-	if os.IsNotExist(err) {
-		err = os.MkdirAll(fileDir, os.ModePerm)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to create %s directory: %w", fileDir, err)
-	}
-
-	fileName := "rt" + episode + "_" + time.Now().Format("2006_01_02_15_04_05") + ".mp3"
-	filePath := path.Join(fileDir, fileName)
-
-	f, err := os.Create(filePath) //nolint: gosec
-	if err != nil {
-		return nil, fmt.Errorf("failed to create file: %w", err)
-	}
-
-	return f, nil
-}
-
 // Record records a stream to a file
 func (r *Recorder) Record(_ context.Context, s *Stream) error {
-	f, err := r.prepareFile(s.Number)
+	fileDir := path.Join(r.dir, s.Number)
+
+	err := os.MkdirAll(fileDir, os.ModePerm)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create %s directory: %w", fileDir, err)
 	}
-	defer f.Close() //nolint: errcheck
+
+	fileName := "rt" + s.Number + "_" + time.Now().Format("2006_01_02_15_04_05") + ".mp3"
+	filePath := path.Join(fileDir, fileName)
+
+	f, err := os.Create(filepath.Clean(filePath))
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer f.Close()
 
 	buf := make([]byte, buffer)
 
-	defer s.Body.Close() //nolint: errcheck
+	defer s.Body.Close()
 
 	slog.Info(fmt.Sprintf("started recording %s at %v", s.Number, time.Now().Format(time.RFC3339)))
 	for {
