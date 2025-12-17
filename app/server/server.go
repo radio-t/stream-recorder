@@ -9,7 +9,6 @@ import (
 
 // Server is the main struct for the server
 type Server struct {
-	port     string
 	dir      string
 	revision string
 	srv      *http.Server
@@ -18,7 +17,6 @@ type Server struct {
 // NewServer creates a new server and setup handler
 func NewServer(port, dir, rev string) *Server {
 	s := Server{ //nolint:exhaustruct
-		port:     port,
 		dir:      dir,
 		revision: rev,
 	}
@@ -30,17 +28,19 @@ func NewServer(port, dir, rev string) *Server {
 	mux.HandleFunc("/", s.IndexHandler)
 
 	s.srv = &http.Server{ //nolint:exhaustruct
-		Addr:         ":" + port,
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadTimeout:       5 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      0, // disable for large file downloads
+		IdleTimeout:       120 * time.Second,
 	}
 
 	return &s
 }
 
 // Start starts the server
-func (s *Server) Start(_ context.Context) error {
+func (s *Server) Start() error {
 	return s.srv.ListenAndServe()
 }
 

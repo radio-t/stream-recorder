@@ -53,11 +53,24 @@ func main() {
 	if opts.Port != "" {
 		slog.Info("Healthcheck enabled")
 
+		s := server.NewServer(opts.Port, opts.Dir, revision)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s := server.NewServer(opts.Port, opts.Dir, revision)
-			go s.Start(ctx) //nolint:errcheck
+			if err := s.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("server error", slog.String("error", err.Error()))
+			}
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := s.Stop(shutdownCtx); err != nil {
+				slog.Error("server shutdown error", slog.String("error", err.Error()))
+			}
 		}()
 	}
 
