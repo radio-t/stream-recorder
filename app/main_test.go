@@ -17,6 +17,14 @@ import (
 	"github.com/radio-t/stream-recorder/app/recorder"
 )
 
+type httpClientMock struct {
+	doFunc func(req *http.Request) (*http.Response, error)
+}
+
+func (m *httpClientMock) Do(req *http.Request) (*http.Response, error) {
+	return m.doFunc(req)
+}
+
 func icecastContainer(ctx context.Context, t *testing.T) testcontainers.Container {
 	t.Helper()
 	req := testcontainers.ContainerRequest{
@@ -54,8 +62,8 @@ func TestWithIcecast(t *testing.T) {
 	endpoint, err := container.Endpoint(ctx, "")
 	require.NoError(t, err)
 
-	mc := &recorder.HTTPClientMock{
-		DoFunc: func(req *http.Request) (*http.Response, error) {
+	mc := &httpClientMock{
+		doFunc: func(req *http.Request) (*http.Response, error) {
 			if req.URL.Path == "/site-api/last/1" {
 				return &http.Response{
 					StatusCode: http.StatusOK,

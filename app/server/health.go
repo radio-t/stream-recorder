@@ -30,7 +30,7 @@ func (s *Server) HealthHandler(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, err = w.Write([]byte(err.Error()))
 		if err != nil {
-			slog.Error("error writing response:", slog.String("", err.Error()))
+			slog.Error("error writing response", slog.String("error", err.Error()))
 		}
 		return
 	}
@@ -39,7 +39,7 @@ func (s *Server) HealthHandler(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, err := w.Write([]byte(warning))
 		if err != nil {
-			slog.Error("error writing response:", slog.String("", err.Error()))
+			slog.Error("error writing response", slog.String("error", err.Error()))
 		}
 		return
 	}

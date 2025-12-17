@@ -107,6 +107,7 @@ func TestFetchStream(t *testing.T) {
 			doFunc: func(_ *http.Request) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusNotFound,
+					Body:       io.NopCloser(strings.NewReader("")),
 				}, nil
 			},
 			responseBody:  "",

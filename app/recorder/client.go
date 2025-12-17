@@ -13,7 +13,7 @@ import (
 
 // HTTPClient interface to make HTTP requests
 //
-//go:generate moq -out httpclient_moq.go . HTTPClient
+//go:generate moq -out httpclient_moq_test.go . HTTPClient
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
@@ -85,6 +85,7 @@ func (c *Client) FetchStream(ctx context.Context) (io.ReadCloser, error) {
 	}
 
 	if res.StatusCode != http.StatusOK {
+		res.Body.Close() //nolint:errcheck,gosec
 		return nil, ErrNotFound
 	}
 
