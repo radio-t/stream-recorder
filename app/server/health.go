@@ -53,11 +53,11 @@ func (s *Server) getCapacity() (int, error) {
 		return 0, fmt.Errorf("failed to make Statfs call: %w, path: %s", err, s.dir)
 	}
 
-	total := stats.Blocks * uint64(stats.Bsize)
-	free := stats.Bfree * uint64(stats.Bsize)
+	total := stats.Blocks * uint64(stats.Bsize) //nolint:gosec,nolintlint // bsize is always positive
+	free := stats.Bfree * uint64(stats.Bsize)   //nolint:gosec,nolintlint // bsize is always positive
 	used := total - free
 
-	capacity := int(used * 100 / total)
+	capacity := int(used * 100 / total) //nolint:gosec // overflow is not possible here
 
 	return capacity, nil
 }

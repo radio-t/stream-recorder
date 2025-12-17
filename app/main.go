@@ -70,7 +70,7 @@ func main() {
 }
 
 func run(ctx context.Context, l *recorder.Listener, r *recorder.Recorder) {
-	ticker := time.NewTicker(time.Second * 5) //nolint:gomnd
+	ticker := time.NewTicker(time.Second * 5) //nolint:mnd
 	defer ticker.Stop()
 	for {
 		select {

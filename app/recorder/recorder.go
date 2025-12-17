@@ -30,7 +30,7 @@ func (r *Recorder) prepareFile(episode string) (*os.File, error) {
 
 	_, err := os.Stat(fileDir)
 	if os.IsNotExist(err) {
-		err = os.MkdirAll(fileDir, os.ModePerm)
+		err = os.MkdirAll(fileDir, 0o750)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create %s directory: %w", fileDir, err)
