@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -45,7 +46,10 @@ func icecastContainer(ctx context.Context, t *testing.T) testcontainers.Containe
 	return container
 }
 
-func TestWithIcecast(t *testing.T) {
+// TestRecordingPipeline tests the recording pipeline with a real Icecast stream.
+// This is an integration test that verifies Client, Listener, and Recorder work together.
+// Note: Site API is mocked, only the stream is real.
+func TestRecordingPipeline(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -53,48 +57,60 @@ func TestWithIcecast(t *testing.T) {
 	ctx := context.Background()
 
 	container := icecastContainer(ctx, t)
-
-	defer func() {
-		err := container.Terminate(ctx)
-		require.NoError(t, err)
-	}()
+	defer func() { _ = container.Terminate(ctx) }()
 
 	endpoint, err := container.Endpoint(ctx, "")
 	require.NoError(t, err)
 
+	// mock Site API, use real HTTP for stream
 	mc := &httpClientMock{
 		doFunc: func(req *http.Request) (*http.Response, error) {
 			if req.URL.Path == "/site-api/last/1" {
 				return &http.Response{
 					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`[{"title": "Radio-t test"}]`)),
+					Body:       io.NopCloser(strings.NewReader(`[{"title": "Radio-T 999"}]`)),
 				}, nil
 			}
 			return http.DefaultClient.Do(req)
 		},
 	}
 
-	url := "http://" + endpoint + "/stream.mp3"
-	c := recorder.NewClient(mc, url, "/site-api/last/1")
-	l := recorder.NewListener(c)
+	streamURL := "http://" + endpoint + "/stream.mp3"
+	client := recorder.NewClient(mc, streamURL, "/site-api/last/1")
+	listener := recorder.NewListener(client)
 
-	stream, err := l.Listen(ctx)
+	stream, err := listener.Listen(ctx)
 	require.NoError(t, err)
 
-	tmp := os.TempDir()
-	recordsPath := path.Join(tmp, "records")
-	defer func() { _ = os.RemoveAll(recordsPath) }()
+	recordsPath := t.TempDir()
+	rec := recorder.NewRecorder(recordsPath)
 
-	r := recorder.NewRecorder(recordsPath)
-
-	err = r.Record(ctx, stream)
+	err = rec.Record(ctx, stream)
 	require.NoError(t, err)
 
-	records, err := os.ReadDir(recordsPath)
+	// verify episode directory created with correct name
+	episodeDirs, err := os.ReadDir(recordsPath)
 	require.NoError(t, err)
-	require.Len(t, records, 1)
+	require.Len(t, episodeDirs, 1)
+	assert.Equal(t, "999", episodeDirs[0].Name(), "episode directory should be named after episode number")
 
-	fi, err := records[0].Info()
+	// verify recording file created with correct naming pattern
+	episodePath := path.Join(recordsPath, episodeDirs[0].Name())
+	files, err := os.ReadDir(episodePath)
 	require.NoError(t, err)
-	require.NotZero(t, fi.Size())
+	require.Len(t, files, 1)
+
+	fileName := files[0].Name()
+	assert.True(t, strings.HasPrefix(fileName, "rt999_"), "file should start with rt{episode}_")
+	assert.True(t, strings.HasSuffix(fileName, ".mp3"), "file should have .mp3 extension")
+
+	// verify file has content and valid MP3 header
+	filePath := path.Join(episodePath, fileName)
+	data, err := os.ReadFile(filePath) //nolint:gosec // test file path from t.TempDir()
+	require.NoError(t, err)
+	require.Greater(t, len(data), 3, "file should have content")
+
+	// check for MP3 frame sync (0xFF 0xFB/FA/F3/F2) or ID3 tag
+	isMP3 := (data[0] == 0xFF && (data[1]&0xE0) == 0xE0) || string(data[0:3]) == "ID3"
+	assert.True(t, isMP3, "file should have valid MP3 header")
 }
