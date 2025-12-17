@@ -12,6 +12,7 @@ import (
 )
 
 // HTTPClient interface to make HTTP requests
+//
 //go:generate moq -out httpclient_moq.go . HTTPClient
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -36,6 +37,11 @@ func NewClient(c HTTPClient, stream, site string) *Client {
 // ErrNotFound is returned when the stream is not found
 var ErrNotFound = errors.New("not found")
 
+// Entry represents a single entry from the SiteAPI
+type Entry struct {
+	Title string `json:"title"`
+}
+
 // FetchLatest fetches the latest entry from the SiteAPI to find out the title of the stream
 func (c *Client) FetchLatest(ctx context.Context) (string, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.SiteAPIUrl, http.NoBody)
@@ -46,13 +52,14 @@ func (c *Client) FetchLatest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("error making request: %w", err)
 	}
+	defer res.Body.Close() //nolint:errcheck
+
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return "", fmt.Errorf("error reading response: %w", err)
 	}
-	defer res.Body.Close()
-	var entries []Entry
 
+	var entries []Entry
 	err = json.Unmarshal(body, &entries)
 	if err != nil {
 		return "", fmt.Errorf("error unmarshalling response: %w", err)

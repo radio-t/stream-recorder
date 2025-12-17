@@ -17,7 +17,7 @@ type Server struct {
 
 // NewServer creates a new server and setup handler
 func NewServer(port, dir, rev string) *Server {
-	s := Server{
+	s := Server{ //nolint:exhaustruct
 		port:     port,
 		dir:      dir,
 		revision: rev,
@@ -29,10 +29,10 @@ func NewServer(port, dir, rev string) *Server {
 	mux.HandleFunc("/health", s.HealthHandler)
 	mux.HandleFunc("/", s.IndexHandler)
 
-	s.srv = &http.Server{
-		Addr: ":"+port,
-		Handler: mux,
-		ReadTimeout: 5 * time.Second,
+	s.srv = &http.Server{ //nolint:exhaustruct
+		Addr:         ":" + port,
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
 	}
 

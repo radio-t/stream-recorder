@@ -42,11 +42,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	c := recorder.NewClient(http.DefaultClient, opts.Stream, opts.Site)
+	myclient := recorder.NewClient(http.DefaultClient, opts.Stream, opts.Site)
 
 	r := recorder.NewRecorder(opts.Dir)
 
-	streamlistener := recorder.NewListener(c)
+	streamlistener := recorder.NewListener(myclient)
 
 	wg := sync.WaitGroup{}
 
@@ -57,7 +57,7 @@ func main() {
 		go func() {
 			defer wg.Done()
 			s := server.NewServer(opts.Port, opts.Dir, revision)
-			go s.Start()
+			go s.Start(ctx) //nolint:errcheck
 		}()
 	}
 
