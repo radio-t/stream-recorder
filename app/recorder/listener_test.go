@@ -2,7 +2,6 @@ package recorder_test
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -44,6 +43,7 @@ func TestListener(t *testing.T) {
 					return nil, recorder.ErrNotFound
 				},
 			},
+			expected:  "",
 			errorFunc: assert.Error,
 		},
 	}
@@ -70,7 +70,7 @@ func TestListener(t *testing.T) {
 
 			got := string(buf)
 
-			assert.Equal(t, tc.expected, got, fmt.Sprintf(`expected stream of: %q but got: %q`, tc.expected, got))
+			assert.Equal(t, tc.expected, got)
 		})
 	}
 }

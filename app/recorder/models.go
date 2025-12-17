@@ -3,8 +3,6 @@ package recorder
 import "time"
 
 // Entry API сайта radio-t.com https://radio-t.com/api-docs/
-//
-//nolint:tagliatelle
 type Entry struct {
 	URL        string      `json:"url"`                   // url поста
 	Title      string      `json:"title"`                 // заголовок поста
