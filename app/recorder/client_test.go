@@ -15,54 +15,54 @@ func TestFetchLatest(t *testing.T) {
 	t.Parallel()
 
 	testcases := []struct {
-		name           string
-		doFunc         func (*http.Request) (*http.Response, error) 
-		expectedTitle  string
-		errorFunc      assert.ErrorAssertionFunc
+		name          string
+		doFunc        func(*http.Request) (*http.Response, error)
+		expectedTitle string
+		errorFunc     assert.ErrorAssertionFunc
 	}{
 		{
-			name:           "successful fetch",
-			doFunc: func(r *http.Request) (*http.Response, error) {
+			name: "successful fetch",
+			doFunc: func(_ *http.Request) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`[{"title":"Radio-T 904"}]`)),
 				}, nil
 			},
-		  expectedTitle:  "Radio-T 904",
-			errorFunc:      assert.NoError,
+			expectedTitle: "Radio-T 904",
+			errorFunc:     assert.NoError,
 		},
 		{
-			name:           "no entries",
-			doFunc: func(r *http.Request) (*http.Response, error) {
+			name: "no entries",
+			doFunc: func(_ *http.Request) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`[]`)),
 				}, nil
 			},
-		  expectedTitle:  "",
-			errorFunc:      assert.Error,
+			expectedTitle: "",
+			errorFunc:     assert.Error,
 		},
 		{
-			name:           "empty entry",
-			doFunc: func(r *http.Request) (*http.Response, error) {
+			name: "empty entry",
+			doFunc: func(_ *http.Request) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`[{}]`)),
 				}, nil
 			},
-		  expectedTitle:  "",
-			errorFunc:      assert.NoError,
+			expectedTitle: "",
+			errorFunc:     assert.NoError,
 		},
 		{
-			name:           "error unmarshalling response",
-			doFunc:     		func(r *http.Request) (*http.Response, error) {
+			name: "error unmarshalling response",
+			doFunc: func(_ *http.Request) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusNotFound,
 					Body:       io.NopCloser(strings.NewReader("invalid json")),
 				}, nil
 			},
-			expectedTitle:  "",
-			errorFunc:      assert.Error,
+			expectedTitle: "",
+			errorFunc:     assert.Error,
 		},
 	}
 
@@ -86,31 +86,31 @@ func TestFetchStream(t *testing.T) {
 	t.Parallel()
 
 	testcases := []struct {
-		name           string
-		doFunc         func (*http.Request) (*http.Response, error)
-		responseBody   string
-		expectedError  error
+		name          string
+		doFunc        func(*http.Request) (*http.Response, error)
+		responseBody  string
+		expectedError error
 	}{
 		{
-			name:           "successful fetch",
-			doFunc: func(r *http.Request) (*http.Response, error) {
+			name: "successful fetch",
+			doFunc: func(_ *http.Request) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader("test response body")),
 				}, nil
 			},
-			responseBody:   "test response body",
-			expectedError:  nil,
+			responseBody:  "test response body",
+			expectedError: nil,
 		},
 		{
-			name:           "error response",
-			doFunc: func(r *http.Request) (*http.Response, error) {
+			name: "error response",
+			doFunc: func(_ *http.Request) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusNotFound,
 				}, nil
 			},
-			responseBody:   "",
-			expectedError:  ErrNotFound,
+			responseBody:  "",
+			expectedError: ErrNotFound,
 		},
 	}
 

@@ -48,7 +48,7 @@ func (s *Server) HealthHandler(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) getCapacity() (int, error) {
-	stats := &syscall.Statfs_t{}
+	stats := &syscall.Statfs_t{} //nolint:exhaustruct
 
 	abs, err := filepath.Abs(s.dir)
 	if err != nil {

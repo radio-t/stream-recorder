@@ -16,7 +16,7 @@ func TestListener(t *testing.T) {
 	t.Parallel()
 	testcases := []struct {
 		name      string
-		client    recorder.ClientService
+		client    *recorder.ClientServiceMock
 		expected  string
 		errorFunc assert.ErrorAssertionFunc
 	}{
@@ -62,7 +62,7 @@ func TestListener(t *testing.T) {
 
 			assert.NotNil(t, s.Body)
 
-			defer s.Body.Close()
+			defer s.Body.Close() //nolint:errcheck
 
 			buf := make([]byte, 10)
 			_, err = s.Body.Read(buf)
