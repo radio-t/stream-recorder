@@ -25,7 +25,7 @@ make build
 ## Docker
 
 ```bash
-docker-compose up --detach
+docker compose up --detach
 ```
 
 ## API Endpoints
