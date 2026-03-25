@@ -242,6 +242,28 @@ func TestDownloadEpisodeHandler(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
+
+	t.Run("dot episode name returns 400", func(t *testing.T) {
+		req := newRequest(t, "/episode/.")
+		rec := httptest.NewRecorder()
+
+		srv.DownloadEpisodeHandler(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("regular file instead of directory returns 404", func(t *testing.T) {
+		fileDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(fileDir, "notadir"), []byte("data"), 0o600))
+		fileSrv := newTestServer(t, fileDir)
+
+		req := newRequest(t, "/episode/notadir")
+		rec := httptest.NewRecorder()
+
+		fileSrv.DownloadEpisodeHandler(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
 }
 
 func TestListEpisodes(t *testing.T) {

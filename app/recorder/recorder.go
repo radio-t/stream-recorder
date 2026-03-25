@@ -51,11 +51,23 @@ func (r *Recorder) Record(ctx context.Context, s *Stream) error { //nolint:gocyc
 	closeBody := func() { closeOnce.Do(func() { s.Body.Close() }) } //nolint: errcheck,gosec
 	defer closeBody()
 
+	// check context before creating any files on disk
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	f, err := r.prepareFile(s.Number)
 	if err != nil {
 		return err
 	}
 	defer f.Close() //nolint: errcheck
+
+	// if context was cancelled between the check above and file creation, clean up the empty file
+	if ctx.Err() != nil {
+		os.Remove(f.Name())           //nolint: errcheck,gosec // best-effort cleanup
+		os.Remove(path.Dir(f.Name())) //nolint: errcheck,gosec // removes dir only if empty
+		return ctx.Err()
+	}
 
 	buf := make([]byte, buffer)
 

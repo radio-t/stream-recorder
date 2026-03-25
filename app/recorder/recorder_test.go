@@ -140,5 +140,10 @@ func TestRecorderContextAlreadyCancelled(t *testing.T) {
 	cancel() // cancel before Record starts
 
 	err := r.Record(ctx, s)
-	assert.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, err, context.Canceled)
+
+	// verify no episode directory or zero-byte file was created
+	entries, readErr := os.ReadDir(dir)
+	require.NoError(t, readErr)
+	assert.Empty(t, entries, "no files should be created when context is already cancelled")
 }

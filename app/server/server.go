@@ -181,13 +181,18 @@ func getCapacity(dir string) (int, error) {
 // DownloadEpisodeHandler zips files for a single episode directory and downloads it
 func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) {
 	folder, _ := strings.CutPrefix(r.URL.Path, "/episode/")
-	if folder == "" || strings.Contains(folder, "..") || strings.Contains(folder, "/") {
+	if folder == "" || folder == "." || strings.Contains(folder, "..") || strings.Contains(folder, "/") {
 		http.Error(w, "invalid episode", http.StatusBadRequest)
 		return
 	}
 
 	dirPath := path.Join(s.dir, folder)
-	if _, err := os.Stat(dirPath); err != nil { //nolint:gosec // folder validated above: no ".." or "/"
+	fi, err := os.Stat(dirPath) //nolint:gosec // folder validated above: no ".." or "/"
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !fi.IsDir() {
 		http.NotFound(w, r)
 		return
 	}
