@@ -72,11 +72,11 @@
 - [x] run tests — must pass before next task
 
 ### Task 6: Verify acceptance criteria
-- [ ] verify all issue #2 feedback items are addressed
-- [ ] run full test suite: `go test -race ./app/...`
-- [ ] run linter: `golangci-lint run` — fix any issues
-- [ ] verify test coverage: `go test -race -coverprofile=coverage.out ./app/... && go tool cover -func=coverage.out`
-- [ ] run `gofmt -w` on all modified files
+- [x] verify all issue #2 feedback items are addressed
+- [x] run full test suite: `go test -race ./app/...`
+- [x] run linter: `golangci-lint run` — fix any issues
+- [x] verify test coverage: `go test -race -coverprofile=coverage.out ./app/... && go tool cover -func=coverage.out`
+- [x] run `gofmt -w` on all modified files
 
 ### Task 7: [Final] Update documentation
 - [ ] update README.md with current state

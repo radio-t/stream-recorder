@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"sync"
 	"time"
 )
 
@@ -54,12 +55,15 @@ func (r *Recorder) Record(ctx context.Context, s *Stream) error {
 
 	buf := make([]byte, buffer)
 
-	defer s.Body.Close() //nolint: errcheck
+	var closeOnce sync.Once
+	closeBody := func() { closeOnce.Do(func() { s.Body.Close() }) } //nolint: errcheck,gosec
+
+	defer closeBody()
 
 	// close stream body when context is cancelled to unblock a pending Read
 	go func() {
 		<-ctx.Done()
-		s.Body.Close() //nolint: errcheck,gosec
+		closeBody()
 	}()
 
 	slog.Info(fmt.Sprintf("started recording %s at %v", s.Number, time.Now().Format(time.RFC3339)))

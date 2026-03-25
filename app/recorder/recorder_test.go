@@ -44,10 +44,11 @@ func TestRecorder(t *testing.T) {
 // slowReader blocks on reads until data is sent through a channel or context is cancelled.
 // this simulates a live stream that produces data slowly.
 type slowReader struct {
-	ch   chan []byte
-	done chan struct{}
-	mu   sync.Mutex
-	buf  []byte
+	ch        chan []byte
+	done      chan struct{}
+	mu        sync.Mutex
+	closeOnce sync.Once
+	buf       []byte
 }
 
 func newSlowReader() *slowReader {
@@ -87,11 +88,7 @@ func (r *slowReader) Read(p []byte) (int, error) {
 }
 
 func (r *slowReader) Close() error {
-	select {
-	case <-r.done:
-	default:
-		close(r.done)
-	}
+	r.closeOnce.Do(func() { close(r.done) })
 	return nil
 }
 
