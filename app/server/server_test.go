@@ -48,6 +48,13 @@ func newRequest(t *testing.T, target string) *http.Request {
 	return req
 }
 
+// serveHTTP routes the request through the server's router, so path values and route matching work
+func serveHTTP(srv *Server, req *http.Request) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(rec, req)
+	return rec
+}
+
 func TestIndexHandler(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -108,9 +115,7 @@ func TestIndexHandler(t *testing.T) {
 		srv := newTestServer(t, dir)
 
 		req := newRequest(t, "/favicon.ico")
-		rec := httptest.NewRecorder()
-
-		srv.IndexHandler(rec, req)
+		rec := serveHTTP(srv, req)
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
@@ -182,9 +187,7 @@ func TestDownloadEpisodeHandler(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			req := newRequest(t, "/episode/"+tc.episode)
-			rec := httptest.NewRecorder()
-
-			srv.DownloadEpisodeHandler(rec, req)
+			rec := serveHTTP(srv, req)
 
 			resp := rec.Result()
 			defer resp.Body.Close() //nolint:errcheck
@@ -218,36 +221,14 @@ func TestDownloadEpisodeHandler(t *testing.T) {
 
 	t.Run("non-existent episode returns 404", func(t *testing.T) {
 		req := newRequest(t, "/episode/000")
-		rec := httptest.NewRecorder()
-
-		srv.DownloadEpisodeHandler(rec, req)
+		rec := serveHTTP(srv, req)
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
 
 	t.Run("path traversal returns 400", func(t *testing.T) {
-		req := newRequest(t, "/episode/../../etc")
-		rec := httptest.NewRecorder()
-
-		srv.DownloadEpisodeHandler(rec, req)
-
-		assert.Equal(t, http.StatusBadRequest, rec.Code)
-	})
-
-	t.Run("empty episode name returns 400", func(t *testing.T) {
-		req := newRequest(t, "/episode/")
-		rec := httptest.NewRecorder()
-
-		srv.DownloadEpisodeHandler(rec, req)
-
-		assert.Equal(t, http.StatusBadRequest, rec.Code)
-	})
-
-	t.Run("dot episode name returns 400", func(t *testing.T) {
-		req := newRequest(t, "/episode/.")
-		rec := httptest.NewRecorder()
-
-		srv.DownloadEpisodeHandler(rec, req)
+		req := newRequest(t, "/episode/..%2F..%2Fetc")
+		rec := serveHTTP(srv, req)
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
@@ -258,9 +239,7 @@ func TestDownloadEpisodeHandler(t *testing.T) {
 		fileSrv := newTestServer(t, fileDir)
 
 		req := newRequest(t, "/episode/notadir")
-		rec := httptest.NewRecorder()
-
-		fileSrv.DownloadEpisodeHandler(rec, req)
+		rec := serveHTTP(fileSrv, req)
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})

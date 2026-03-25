@@ -16,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/go-pkgz/routegroup"
 )
 
 //go:embed static/index.html
@@ -48,14 +50,14 @@ func NewServer(port, dir string) *Server {
 		warnCapacity: 80, //nolint:mnd
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/episode/", s.DownloadEpisodeHandler)
-	mux.HandleFunc("/health", s.HealthHandler)
-	mux.HandleFunc("/", s.IndexHandler)
+	router := routegroup.New(http.NewServeMux())
+	router.HandleFunc("GET /episode/{folder}", s.DownloadEpisodeHandler)
+	router.HandleFunc("GET /health", s.HealthHandler)
+	router.HandleFunc("GET /{$}", s.IndexHandler)
 
 	s.srv = &http.Server{ //nolint:exhaustruct
 		Addr:              ":" + port,
-		Handler:           mux,
+		Handler:           router,
 		ReadTimeout:       5 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      0, // disable for large file downloads
@@ -101,12 +103,7 @@ func listEpisodes(dir string) ([]episode, error) {
 }
 
 // IndexHandler renders the page listing recorded episodes
-func (s *Server) IndexHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-
+func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 	episodes, err := listEpisodes(s.dir)
 	if err != nil {
 		slog.Error("failed to list episodes", slog.String("error", err.Error()))
@@ -180,8 +177,8 @@ func getCapacity(dir string) (int, error) {
 
 // DownloadEpisodeHandler zips files for a single episode directory and downloads it
 func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) {
-	folder, _ := strings.CutPrefix(r.URL.Path, "/episode/")
-	if folder == "" || folder == "." || strings.Contains(folder, "..") || strings.Contains(folder, "/") {
+	folder := r.PathValue("folder")
+	if folder == "" || folder == "." || strings.Contains(folder, "..") {
 		http.Error(w, "invalid episode", http.StatusBadRequest)
 		return
 	}
