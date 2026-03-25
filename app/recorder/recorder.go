@@ -8,12 +8,14 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"sync"
 	"time"
 )
 
-const buffer = 128
+const buffer = 32 * 1024 // 32KB read buffer
 
-// Recorder records a
+// Recorder writes a Stream's audio body to disk, creating one MP3 file per session
+// inside a per-episode subdirectory.
 type Recorder struct {
 	dir string
 }
@@ -28,11 +30,7 @@ func NewRecorder(dir string) *Recorder {
 func (r *Recorder) prepareFile(episode string) (*os.File, error) {
 	fileDir := path.Join(r.dir, episode)
 
-	_, err := os.Stat(fileDir)
-	if os.IsNotExist(err) {
-		err = os.MkdirAll(fileDir, 0o750)
-	}
-	if err != nil {
+	if err := os.MkdirAll(fileDir, 0o750); err != nil {
 		return nil, fmt.Errorf("failed to create %s directory: %w", fileDir, err)
 	}
 
@@ -47,32 +45,73 @@ func (r *Recorder) prepareFile(episode string) (*os.File, error) {
 	return f, nil
 }
 
-// Record records a stream to a file
-func (r *Recorder) Record(_ context.Context, s *Stream) error {
+// Record records a stream to a file, stopping when context is cancelled
+func (r *Recorder) Record(ctx context.Context, s *Stream) error { //nolint:gocyclo // complexity is inherent to correct io.Reader + context handling
+	var closeOnce sync.Once
+	closeBody := func() { closeOnce.Do(func() { s.Body.Close() }) } //nolint: errcheck,gosec
+	defer closeBody()
+
+	// check context before creating any files on disk
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	f, err := r.prepareFile(s.Number)
 	if err != nil {
 		return err
 	}
 	defer f.Close() //nolint: errcheck
 
+	// if context was cancelled between the check above and file creation, clean up the empty file
+	if ctx.Err() != nil {
+		os.Remove(f.Name())           //nolint: errcheck,gosec // best-effort cleanup
+		os.Remove(path.Dir(f.Name())) //nolint: errcheck,gosec // removes dir only if empty
+		return ctx.Err()
+	}
+
 	buf := make([]byte, buffer)
 
-	defer s.Body.Close() //nolint: errcheck
+	// close stream body when context is cancelled to unblock a pending Read.
+	// the done channel ensures the goroutine exits when Record returns normally (EOF).
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			closeBody()
+		case <-done:
+		}
+	}()
 
 	slog.Info(fmt.Sprintf("started recording %s at %v", s.Number, time.Now().Format(time.RFC3339)))
 	for {
-		n, err := s.Body.Read(buf)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 
-		if errors.Is(err, io.EOF) {
+		n, readErr := s.Body.Read(buf)
+
+		// per io.Reader contract, always process n > 0 bytes before considering the error
+		if n > 0 {
+			if _, writeErr := f.Write(buf[:n]); writeErr != nil {
+				return fmt.Errorf("failed to write to file: %w", writeErr)
+			}
+		}
+
+		if errors.Is(readErr, io.EOF) {
+			// body may have been closed due to context cancellation
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			break
 		}
-		if err != nil {
-			return fmt.Errorf("failed to read from stream: %w", err)
-		}
-
-		_, err = f.Write(buf[:n])
-		if err != nil {
-			return fmt.Errorf("failed to write to file: %w", err)
+		if readErr != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("failed to read from stream: %w", readErr)
 		}
 	}
 	slog.Info(fmt.Sprintf("finished recording at %v", time.Now().Format(time.RFC3339)))

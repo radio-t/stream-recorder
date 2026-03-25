@@ -1,5 +1,7 @@
-// Package recorder is the main functionality for listerning and recording an audio stream
-// methods to call SiteAPI and stream
+// Package recorder provides stream discovery, fetching and recording.
+// Client fetches metadata (episode title) from the SiteAPI and the audio stream body.
+// Listener combines both into a Stream (episode number + body). Recorder writes
+// the stream body to disk, one file per recording session.
 package recorder
 
 import (
@@ -18,7 +20,7 @@ type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// Client is a client to call SiteAPI and stream
+// Client fetches episode metadata from the SiteAPI and the raw audio stream.
 type Client struct {
 	client     HTTPClient
 	Stream     string
@@ -53,6 +55,10 @@ func (c *Client) FetchLatest(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("error making request: %w", err)
 	}
 	defer res.Body.Close() //nolint:errcheck
+
+	if res.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("site API returned status %d", res.StatusCode)
+	}
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {

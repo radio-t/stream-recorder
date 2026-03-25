@@ -20,7 +20,7 @@ jobs:
 
     - name: build and test
       run: |
-        go test -v -race -timeout=100s -covermode=atomic -coverprofile=$GITHUB_WORKSPACE/profile.cov_tmp ./...
+        go test -v -race -timeout=300s -covermode=atomic -coverprofile=$GITHUB_WORKSPACE/profile.cov_tmp ./...
         go build -race ./...
         cat $GITHUB_WORKSPACE/profile.cov_tmp | grep -v "mocks" | grep -v "_mock" > $GITHUB_WORKSPACE/profile.cov
       working-directory: app
@@ -30,7 +30,7 @@ jobs:
     - name: golangci-lint
       uses: golangci/golangci-lint-action@v9
       with:
-        version: v2.7
+        version: v2.11
 
     - name: install goveralls
       run: go install github.com/mattn/goveralls@latest

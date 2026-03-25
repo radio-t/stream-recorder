@@ -2,6 +2,7 @@ package recorder_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -46,6 +47,19 @@ func TestListener(t *testing.T) {
 			expected:  "",
 			errorFunc: assert.Error,
 		},
+		{
+			name: "fetch latest error",
+			client: &recorder.ClientServiceMock{
+				FetchLatestFunc: func(_ context.Context) (string, error) {
+					return "", fmt.Errorf("connection refused")
+				},
+				FetchStreamFunc: func(_ context.Context) (io.ReadCloser, error) {
+					return nil, nil
+				},
+			},
+			expected:  "",
+			errorFunc: assert.Error,
+		},
 	}
 
 	for _, tc := range testcases {
@@ -71,6 +85,33 @@ func TestListener(t *testing.T) {
 			got := string(buf)
 
 			assert.Equal(t, tc.expected, got)
+		})
+	}
+}
+
+func TestNewStreamSanitisesNumber(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		title    string
+		expected string
+	}{
+		{name: "normal episode", title: "Radio-T 999", expected: "999"},
+		{name: "single word returns 0", title: "Radio-T", expected: "0"},
+		{name: "empty string returns 0", title: "", expected: "0"},
+		{name: "path traversal returns 0", title: "Radio-T ../../../etc", expected: "0"},
+		{name: "slash in number returns 0", title: "Radio-T foo/bar", expected: "0"},
+		{name: "backslash in number returns 0", title: "Radio-T foo\\bar", expected: "0"},
+		{name: "dots in number returns 0", title: "Radio-T ..", expected: "0"},
+		{name: "single dot returns 0", title: "Radio-T .", expected: "0"},
+		{name: "double space handled", title: "Radio-T  999", expected: "999"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := recorder.NewStream(tc.title, io.NopCloser(strings.NewReader("")))
+			assert.Equal(t, tc.expected, s.Number)
 		})
 	}
 }

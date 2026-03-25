@@ -13,6 +13,7 @@ Application Options:
       --site=   Radio-t API (default: https://radio-t.com/site-api/last/1) [$SITE]
   -d, --dir=    Recording directory (default: ./) [$DIR]
   -p, --port=   If provided will start API server on the port otherwise server is disabled [$PORT]
+      --dbg     Enable debug logging [$DBG]
 ```
 
 ## Example
@@ -28,11 +29,20 @@ make build
 docker compose up --detach
 ```
 
+## Architecture
+
+The recorder consists of three cooperating components:
+
+- **Client** fetches episode metadata from the Radio-T API and the raw audio stream
+- **Listener** combines the two client calls into a `Stream` (episode number + audio body)
+- **Recorder** writes the stream body to disk as `rt{episode}_{datetime}.mp3`
+
+The main loop polls every 5 seconds. When the API reports a live stream, it records until the stream ends or the context is cancelled.
+
 ## API Endpoints
 
 When `--port` is provided, the server exposes:
 
-- `/` - web UI listing recorded episodes
-- `/health` - health check endpoint (warns if disk capacity exceeds 80%)
-- `/episode/<name>` - download entire episode as ZIP archive
-- `/record/<path>` - download individual MP3 file
+- `GET /` - web UI listing recorded episodes (PicoCSS)
+- `GET /health` - health check (returns 200 if disk usage < 80%, 500 otherwise)
+- `GET /episode/<name>` - download entire episode directory as ZIP archive

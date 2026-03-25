@@ -16,12 +16,14 @@
       {{range .Episodes}}
         <tr>
           <td colspan="2"><a href="/episode/{{ .Name }}">{{ .Name }}</a></td>
-          {{range .Files}}
-            <tr><td></td><td><a href="/record/{{ . }}">{{ . }}</a></td></tr>
-          {{end}}
         </tr>
-        {{else}}
-          <div><strong>no rows</strong>
+        {{range .Files}}
+          <tr><td></td><td>{{ . }}</td></tr>
+        {{end}}
+      {{else}}
+        <tr>
+          <td colspan="2"><strong>no rows</strong></td>
+        </tr>
       {{end}}
     </table>
   </body>
