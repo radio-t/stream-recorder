@@ -17,7 +17,7 @@
         <tr>
           <td colspan="2"><a href="/episode/{{ .Name }}">{{ .Name }}</a></td>
           {{range .Files}}
-            <tr><td></td><td><a href="/record/{{ . }}">{{ . }}</a></td></tr>
+            <tr><td></td><td>{{ . }}</td></tr>
           {{end}}
         </tr>
         {{else}}

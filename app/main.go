@@ -53,7 +53,7 @@ func main() {
 	if opts.Port != "" {
 		slog.Info("Healthcheck enabled")
 
-		s := server.NewServer(opts.Port, opts.Dir, revision)
+		s := server.NewServer(opts.Port, opts.Dir)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
