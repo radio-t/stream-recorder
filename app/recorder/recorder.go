@@ -46,7 +46,11 @@ func (r *Recorder) prepareFile(episode string) (*os.File, error) {
 }
 
 // Record records a stream to a file, stopping when context is cancelled
-func (r *Recorder) Record(ctx context.Context, s *Stream) error {
+func (r *Recorder) Record(ctx context.Context, s *Stream) error { //nolint:gocyclo // complexity is inherent to correct io.Reader + context handling
+	var closeOnce sync.Once
+	closeBody := func() { closeOnce.Do(func() { s.Body.Close() }) } //nolint: errcheck,gosec
+	defer closeBody()
+
 	f, err := r.prepareFile(s.Number)
 	if err != nil {
 		return err
@@ -55,15 +59,16 @@ func (r *Recorder) Record(ctx context.Context, s *Stream) error {
 
 	buf := make([]byte, buffer)
 
-	var closeOnce sync.Once
-	closeBody := func() { closeOnce.Do(func() { s.Body.Close() }) } //nolint: errcheck,gosec
-
-	defer closeBody()
-
-	// close stream body when context is cancelled to unblock a pending Read
+	// close stream body when context is cancelled to unblock a pending Read.
+	// the done channel ensures the goroutine exits when Record returns normally (EOF).
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
-		<-ctx.Done()
-		closeBody()
+		select {
+		case <-ctx.Done():
+			closeBody()
+		case <-done:
+		}
 	}()
 
 	slog.Info(fmt.Sprintf("started recording %s at %v", s.Number, time.Now().Format(time.RFC3339)))
@@ -74,25 +79,27 @@ func (r *Recorder) Record(ctx context.Context, s *Stream) error {
 		default:
 		}
 
-		n, err := s.Body.Read(buf)
+		n, readErr := s.Body.Read(buf)
 
-		if errors.Is(err, io.EOF) {
+		// per io.Reader contract, always process n > 0 bytes before considering the error
+		if n > 0 {
+			if _, writeErr := f.Write(buf[:n]); writeErr != nil {
+				return fmt.Errorf("failed to write to file: %w", writeErr)
+			}
+		}
+
+		if errors.Is(readErr, io.EOF) {
 			// body may have been closed due to context cancellation
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			break
 		}
-		if err != nil {
+		if readErr != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return fmt.Errorf("failed to read from stream: %w", err)
-		}
-
-		_, err = f.Write(buf[:n])
-		if err != nil {
-			return fmt.Errorf("failed to write to file: %w", err)
+			return fmt.Errorf("failed to read from stream: %w", readErr)
 		}
 	}
 	slog.Info(fmt.Sprintf("finished recording at %v", time.Now().Format(time.RFC3339)))

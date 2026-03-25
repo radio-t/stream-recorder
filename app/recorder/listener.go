@@ -29,11 +29,15 @@ func NewListener(c ClientService) *Listener {
 }
 
 func getStreamNumber(latest string) string {
-	args := strings.Split(latest, " ")
+	args := strings.Fields(latest)
 	if len(args) < 2 { //nolint:mnd
 		return "0"
 	}
-	return args[1]
+	num := args[1]
+	if num == "" || num == "." || strings.Contains(num, "..") || strings.ContainsAny(num, "/\\") {
+		return "0"
+	}
+	return num
 }
 
 // Stream represents a stream

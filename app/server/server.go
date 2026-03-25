@@ -3,6 +3,7 @@ package server
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"embed"
 	"fmt"
@@ -28,9 +29,10 @@ type episode struct {
 
 // Server is the main struct for the server
 type Server struct {
-	dir      string
-	srv      *http.Server
-	template *template.Template
+	dir          string
+	srv          *http.Server
+	template     *template.Template
+	warnCapacity int
 }
 
 // NewServer creates a new server and sets up handlers
@@ -41,8 +43,9 @@ func NewServer(port, dir string) *Server {
 	}
 
 	s := Server{ //nolint:exhaustruct
-		dir:      dir,
-		template: t,
+		dir:          dir,
+		template:     t,
+		warnCapacity: 80, //nolint:mnd
 	}
 
 	mux := http.NewServeMux()
@@ -98,10 +101,16 @@ func listEpisodes(dir string) ([]episode, error) {
 }
 
 // IndexHandler renders the page listing recorded episodes
-func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) IndexHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
 	episodes, err := listEpisodes(s.dir)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("failed to list episodes", slog.String("error", err.Error()))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -109,26 +118,22 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 		Episodes []episode
 	}{Episodes: episodes}
 
-	if err := s.template.Execute(w, data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	var buf bytes.Buffer
+	if err := s.template.Execute(&buf, data); err != nil {
+		slog.Error("failed to render template", slog.String("error", err.Error()))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
+	}
+	if _, err := buf.WriteTo(w); err != nil {
+		slog.Error("error writing response", slog.String("error", err.Error()))
 	}
 }
 
 // HealthHandler returns 200 if disk usage is below warning threshold
 func (s *Server) HealthHandler(w http.ResponseWriter, _ *http.Request) {
-	warning, err := s.checkHealth()
-	if err != nil {
+	if err := s.checkHealth(); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		if _, writeErr := w.Write([]byte(err.Error())); writeErr != nil {
-			slog.Error("error writing response", slog.String("error", writeErr.Error()))
-		}
-		return
-	}
-
-	if warning != "" {
-		w.WriteHeader(http.StatusInternalServerError)
-		if _, writeErr := w.Write([]byte(warning)); writeErr != nil {
 			slog.Error("error writing response", slog.String("error", writeErr.Error()))
 		}
 		return
@@ -137,19 +142,17 @@ func (s *Server) HealthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Server) checkHealth() (string, error) {
-	warnCapacity := 80
-
+func (s *Server) checkHealth() error {
 	capacity, err := getCapacity(s.dir)
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	if capacity > warnCapacity {
-		return fmt.Sprintf("disk is %d%% full", capacity), nil
+	if capacity > s.warnCapacity {
+		return fmt.Errorf("disk is %d%% full", capacity)
 	}
 
-	return "", nil
+	return nil
 }
 
 func getCapacity(dir string) (int, error) {
@@ -165,7 +168,10 @@ func getCapacity(dir string) (int, error) {
 	}
 
 	total := stats.Blocks * uint64(stats.Bsize) //nolint:gosec,nolintlint // bsize is always positive
-	free := stats.Bfree * uint64(stats.Bsize)   //nolint:gosec,nolintlint // bsize is always positive
+	if total == 0 {
+		return 0, nil
+	}
+	free := stats.Bfree * uint64(stats.Bsize) //nolint:gosec,nolintlint // bsize is always positive
 	used := total - free
 	capacity := int(used * 100 / total) //nolint:gosec // overflow is not possible here
 
@@ -175,6 +181,16 @@ func getCapacity(dir string) (int, error) {
 // DownloadEpisodeHandler zips files for a single episode directory and downloads it
 func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) {
 	folder, _ := strings.CutPrefix(r.URL.Path, "/episode/")
+	if folder == "" || strings.Contains(folder, "..") || strings.Contains(folder, "/") {
+		http.Error(w, "invalid episode", http.StatusBadRequest)
+		return
+	}
+
+	dirPath := path.Join(s.dir, folder)
+	if _, err := os.Stat(dirPath); err != nil { //nolint:gosec // folder validated above: no ".." or "/"
+		http.NotFound(w, r)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", "attachment; filename="+folder+".zip")
@@ -182,7 +198,7 @@ func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) 
 	writer := zip.NewWriter(w)
 	defer writer.Close() //nolint:errcheck
 
-	if err := writer.AddFS(os.DirFS(path.Join(s.dir, folder))); err != nil {
+	if err := writer.AddFS(os.DirFS(dirPath)); err != nil {
 		slog.Error("error creating zip", slog.String("error", err.Error())) //nolint:gosec // error from local filesystem, not user input
 	}
 }

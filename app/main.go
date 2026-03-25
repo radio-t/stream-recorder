@@ -30,6 +30,10 @@ var revision = "local" //nolint: gochecknoglobals
 
 func main() {
 	if _, err := flags.Parse(&opts); err != nil {
+		var flagErr *flags.Error
+		if errors.As(err, &flagErr) && flagErr.Type == flags.ErrHelp {
+			os.Exit(0)
+		}
 		slog.Error("failed to parse flags", slog.String("err", err.Error()))
 		os.Exit(1)
 	}
@@ -102,8 +106,10 @@ func run(ctx context.Context, l *recorder.Listener, r *recorder.Recorder) {
 			default:
 				err = r.Record(ctx, stream)
 				if err != nil {
+					if ctx.Err() != nil {
+						return // clean shutdown
+					}
 					slog.Error("error while recording", slog.String("err", err.Error()))
-					return
 				}
 			}
 		}

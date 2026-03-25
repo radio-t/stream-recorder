@@ -102,25 +102,47 @@ func TestIndexHandler(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("non-root path returns 404", func(t *testing.T) {
+		dir := setupTestDir(t)
+		srv := newTestServer(t, dir)
+
+		req := newRequest(t, "/favicon.ico")
+		rec := httptest.NewRecorder()
+
+		srv.IndexHandler(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
 }
 
 func TestHealthHandler(t *testing.T) {
-	t.Run("valid directory returns status based on disk capacity", func(t *testing.T) {
+	t.Run("healthy disk returns 200", func(t *testing.T) {
 		dir := t.TempDir()
 		srv := newTestServer(t, dir)
+		srv.warnCapacity = 100 // any capacity is below threshold
 
 		req := newRequest(t, "/health")
 		rec := httptest.NewRecorder()
 
 		srv.HealthHandler(rec, req)
 
-		// actual result depends on disk usage; verify it's a valid response (200 or disk warning)
-		if rec.Code == http.StatusOK {
-			assert.Empty(t, rec.Body.String())
-		} else {
-			assert.Equal(t, http.StatusInternalServerError, rec.Code)
-			assert.Contains(t, rec.Body.String(), "disk is")
-		}
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Empty(t, rec.Body.String())
+	})
+
+	t.Run("disk above threshold returns 500", func(t *testing.T) {
+		dir := t.TempDir()
+		srv := newTestServer(t, dir)
+		srv.warnCapacity = 0 // any capacity exceeds threshold
+
+		req := newRequest(t, "/health")
+		rec := httptest.NewRecorder()
+
+		srv.HealthHandler(rec, req)
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.Contains(t, rec.Body.String(), "disk is")
 	})
 
 	t.Run("non-existent directory returns error", func(t *testing.T) {
@@ -193,6 +215,33 @@ func TestDownloadEpisodeHandler(t *testing.T) {
 			assert.ElementsMatch(t, tc.expectedFiles, fileNames)
 		})
 	}
+
+	t.Run("non-existent episode returns 404", func(t *testing.T) {
+		req := newRequest(t, "/episode/000")
+		rec := httptest.NewRecorder()
+
+		srv.DownloadEpisodeHandler(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("path traversal returns 400", func(t *testing.T) {
+		req := newRequest(t, "/episode/../../etc")
+		rec := httptest.NewRecorder()
+
+		srv.DownloadEpisodeHandler(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("empty episode name returns 400", func(t *testing.T) {
+		req := newRequest(t, "/episode/")
+		rec := httptest.NewRecorder()
+
+		srv.DownloadEpisodeHandler(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
 }
 
 func TestListEpisodes(t *testing.T) {

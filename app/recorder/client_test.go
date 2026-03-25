@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -54,12 +55,31 @@ func TestFetchLatest(t *testing.T) {
 			errorFunc:     assert.NoError,
 		},
 		{
-			name: "error unmarshalling response",
+			name: "non-OK status returns error",
 			doFunc: func(_ *http.Request) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusNotFound,
 					Body:       io.NopCloser(strings.NewReader("invalid json")),
 				}, nil
+			},
+			expectedTitle: "",
+			errorFunc:     assert.Error,
+		},
+		{
+			name: "error unmarshalling response",
+			doFunc: func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader("invalid json")),
+				}, nil
+			},
+			expectedTitle: "",
+			errorFunc:     assert.Error,
+		},
+		{
+			name: "http request error",
+			doFunc: func(_ *http.Request) (*http.Response, error) {
+				return nil, fmt.Errorf("connection refused")
 			},
 			expectedTitle: "",
 			errorFunc:     assert.Error,
@@ -90,6 +110,7 @@ func TestFetchStream(t *testing.T) {
 		doFunc        func(*http.Request) (*http.Response, error)
 		responseBody  string
 		expectedError error
+		wantErr       bool
 	}{
 		{
 			name: "successful fetch",
@@ -99,8 +120,7 @@ func TestFetchStream(t *testing.T) {
 					Body:       io.NopCloser(strings.NewReader("test response body")),
 				}, nil
 			},
-			responseBody:  "test response body",
-			expectedError: nil,
+			responseBody: "test response body",
 		},
 		{
 			name: "error response",
@@ -110,8 +130,14 @@ func TestFetchStream(t *testing.T) {
 					Body:       io.NopCloser(strings.NewReader("")),
 				}, nil
 			},
-			responseBody:  "",
 			expectedError: ErrNotFound,
+		},
+		{
+			name: "http request error",
+			doFunc: func(_ *http.Request) (*http.Response, error) {
+				return nil, fmt.Errorf("connection refused")
+			},
+			wantErr: true,
 		},
 	}
 
@@ -124,11 +150,14 @@ func TestFetchStream(t *testing.T) {
 			}, "", "")
 
 			reader, err := client.FetchStream(context.Background())
-			if tc.expectedError != nil {
-				assert.ErrorIs(t, err, tc.expectedError)
-			} else {
-				data, err := io.ReadAll(reader)
-				require.NoError(t, err)
+			switch {
+			case tc.expectedError != nil:
+				require.ErrorIs(t, err, tc.expectedError)
+			case tc.wantErr:
+				require.Error(t, err)
+			default:
+				data, readErr := io.ReadAll(reader)
+				require.NoError(t, readErr)
 				assert.Equal(t, tc.responseBody, string(data))
 			}
 		})

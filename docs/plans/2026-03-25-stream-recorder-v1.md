@@ -79,8 +79,8 @@
 - [x] run `gofmt -w` on all modified files
 
 ### Task 7: [Final] Update documentation
-- [ ] update README.md with current state
-- [ ] comment on issue #2 with what's been addressed
+- [x] update README.md with current state
+- [x] comment on issue #2 with what's been addressed
 
 ## Technical Details
 

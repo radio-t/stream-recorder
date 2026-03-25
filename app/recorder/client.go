@@ -56,6 +56,10 @@ func (c *Client) FetchLatest(ctx context.Context) (string, error) {
 	}
 	defer res.Body.Close() //nolint:errcheck
 
+	if res.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("site API returned status %d", res.StatusCode)
+	}
+
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return "", fmt.Errorf("error reading response: %w", err)
