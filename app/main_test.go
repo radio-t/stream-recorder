@@ -186,6 +186,7 @@ func TestFullPipeline(t *testing.T) {
 }
 
 // TestRecordingCancellation verifies that cancelling context during recording stops it cleanly.
+// Reuses the same container image as TestFullPipeline (Docker caches the build).
 func TestRecordingCancellation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
