@@ -65,11 +65,11 @@
 - [x] run tests — must pass before next task
 
 ### Task 5: Extend integration test — full pipeline + server verification
-- [ ] update `app/main_test.go` — verify recorded file size is within reasonable range of source (not just "has content")
-- [ ] add test: record stream → start server → HTTP GET `/` → verify HTML contains episode
-- [ ] add test: HTTP GET `/episode/999` → verify zip download contains the recorded MP3
-- [ ] add test: cancel context during recording → verify it stops cleanly
-- [ ] run tests — must pass before next task
+- [x] update `app/main_test.go` — verify recorded file size is within reasonable range of source (not just "has content")
+- [x] add test: record stream → start server → HTTP GET `/` → verify HTML contains episode
+- [x] add test: HTTP GET `/episode/999` → verify zip download contains the recorded MP3
+- [x] add test: cancel context during recording → verify it stops cleanly
+- [x] run tests — must pass before next task
 
 ### Task 6: Verify acceptance criteria
 - [ ] verify all issue #2 feedback items are addressed

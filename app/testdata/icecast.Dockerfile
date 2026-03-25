@@ -20,4 +20,4 @@ EXPOSE 8000
 USER icecast
 
 CMD icecast2 -c /etc/icecast2/icecast.xml & \
-    ffmpeg -re -i /srv/untsa.mp3 -t 1 -b:a 128k -content_type audio/mpeg icecast://source:hackme@localhost:8000/stream.mp3
+    ffmpeg -re -stream_loop -1 -i /srv/untsa.mp3 -t 60 -b:a 128k -content_type audio/mpeg icecast://source:hackme@localhost:8000/stream.mp3
