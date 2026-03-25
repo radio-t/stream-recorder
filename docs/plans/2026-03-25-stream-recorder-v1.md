@@ -58,11 +58,11 @@
 - [x] run tests — must pass before next task
 
 ### Task 4: Add server tests
-- [ ] create `app/server/server_test.go` with test helper (temp dir with fake episode/recording files)
-- [ ] write test for `IndexHandler` — returns HTML listing episodes and files
-- [ ] write test for `HealthHandler` — returns 200 when disk OK
-- [ ] write test for `DownloadEpisodeHandler` — returns valid zip with correct files
-- [ ] run tests — must pass before next task
+- [x] create `app/server/server_test.go` with test helper (temp dir with fake episode/recording files)
+- [x] write test for `IndexHandler` — returns HTML listing episodes and files
+- [x] write test for `HealthHandler` — returns 200 when disk OK
+- [x] write test for `DownloadEpisodeHandler` — returns valid zip with correct files
+- [x] run tests — must pass before next task
 
 ### Task 5: Extend integration test — full pipeline + server verification
 - [ ] update `app/main_test.go` — verify recorded file size is within reasonable range of source (not just "has content")
