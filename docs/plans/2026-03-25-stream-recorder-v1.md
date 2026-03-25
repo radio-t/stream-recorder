@@ -52,10 +52,10 @@
 - [x] run `go build ./app/...` — must compile
 
 ### Task 3: Fix context propagation in Recorder.Record
-- [ ] write test in `recorder_test.go`: cancel context during recording, verify it stops promptly
-- [ ] update `Recorder.Record` to use context — check `ctx.Done()` in the read loop
-- [ ] update existing recorder tests to pass context properly
-- [ ] run tests — must pass before next task
+- [x] write test in `recorder_test.go`: cancel context during recording, verify it stops promptly
+- [x] update `Recorder.Record` to use context — check `ctx.Done()` in the read loop
+- [x] update existing recorder tests to pass context properly
+- [x] run tests — must pass before next task
 
 ### Task 4: Add server tests
 - [ ] create `app/server/server_test.go` with test helper (temp dir with fake episode/recording files)

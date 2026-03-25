@@ -44,8 +44,8 @@ func (r *Recorder) prepareFile(episode string) (*os.File, error) {
 	return f, nil
 }
 
-// Record records a stream to a file
-func (r *Recorder) Record(_ context.Context, s *Stream) error {
+// Record records a stream to a file, stopping when context is cancelled
+func (r *Recorder) Record(ctx context.Context, s *Stream) error {
 	f, err := r.prepareFile(s.Number)
 	if err != nil {
 		return err
@@ -56,14 +56,33 @@ func (r *Recorder) Record(_ context.Context, s *Stream) error {
 
 	defer s.Body.Close() //nolint: errcheck
 
+	// close stream body when context is cancelled to unblock a pending Read
+	go func() {
+		<-ctx.Done()
+		s.Body.Close() //nolint: errcheck,gosec
+	}()
+
 	slog.Info(fmt.Sprintf("started recording %s at %v", s.Number, time.Now().Format(time.RFC3339)))
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		n, err := s.Body.Read(buf)
 
 		if errors.Is(err, io.EOF) {
+			// body may have been closed due to context cancellation
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			break
 		}
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return fmt.Errorf("failed to read from stream: %w", err)
 		}
 
