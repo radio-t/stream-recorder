@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -35,10 +36,12 @@ type Server struct {
 	srv          *http.Server
 	template     *template.Template
 	warnCapacity int
+	forceRecord  *atomic.Bool
 }
 
-// NewServer creates a new server and sets up handlers
-func NewServer(port, dir string) *Server {
+// NewServer creates a new server and sets up handlers.
+// forceRecord is an optional flag shared with the recording loop; POST /record sets it to true.
+func NewServer(port, dir string, forceRecord *atomic.Bool) *Server {
 	t, err := template.ParseFS(indexTemplateFS, "static/index.html")
 	if err != nil {
 		panic(fmt.Sprintf("failed to parse index template: %v", err))
@@ -48,12 +51,16 @@ func NewServer(port, dir string) *Server {
 		dir:          dir,
 		template:     t,
 		warnCapacity: 80, //nolint:mnd
+		forceRecord:  forceRecord,
 	}
 
 	router := routegroup.New(http.NewServeMux())
 	router.HandleFunc("GET /episode/{folder}", s.DownloadEpisodeHandler)
 	router.HandleFunc("GET /health", s.HealthHandler)
 	router.HandleFunc("GET /{$}", s.IndexHandler)
+	if forceRecord != nil {
+		router.HandleFunc("POST /record", s.ForceRecordHandler)
+	}
 
 	s.srv = &http.Server{ //nolint:exhaustruct
 		Addr:              ":" + port,
@@ -124,6 +131,13 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 	if _, err := buf.WriteTo(w); err != nil {
 		slog.Error("error writing response", slog.String("error", err.Error()))
 	}
+}
+
+// ForceRecordHandler sets the force-record flag to trigger recording outside the schedule window.
+func (s *Server) ForceRecordHandler(w http.ResponseWriter, r *http.Request) {
+	s.forceRecord.Store(true)
+	slog.Info("force recording triggered via API")
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 // HealthHandler returns 200 if disk usage is below warning threshold

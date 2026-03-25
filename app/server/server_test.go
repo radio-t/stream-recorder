@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,7 +39,7 @@ func setupTestDir(t *testing.T) string {
 
 func newTestServer(t *testing.T, dir string) *Server {
 	t.Helper()
-	return NewServer("0", dir)
+	return NewServer("0", dir, nil)
 }
 
 func newRequest(t *testing.T, target string) *http.Request {
@@ -242,6 +243,33 @@ func TestDownloadEpisodeHandler(t *testing.T) {
 		rec := serveHTTP(fileSrv, req)
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+}
+
+func TestForceRecordHandler(t *testing.T) {
+	t.Run("POST /record sets force flag and redirects to index", func(t *testing.T) {
+		dir := t.TempDir()
+		var flag atomic.Bool
+		srv := NewServer("0", dir, &flag)
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
+		require.NoError(t, err)
+
+		rec := serveHTTP(srv, req)
+		assert.Equal(t, http.StatusSeeOther, rec.Code)
+		assert.Equal(t, "/", rec.Header().Get("Location"))
+		assert.True(t, flag.Load(), "force record flag should be set after POST /record")
+	})
+
+	t.Run("route not registered when forceRecord is nil", func(t *testing.T) {
+		dir := t.TempDir()
+		srv := NewServer("0", dir, nil)
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
+		require.NoError(t, err)
+
+		rec := serveHTTP(srv, req)
+		assert.NotEqual(t, http.StatusOK, rec.Code, "POST /record should not succeed when forceRecord is nil")
 	})
 }
 
