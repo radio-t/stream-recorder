@@ -44,12 +44,12 @@
 - [x] run `go build ./app/...` — must compile
 
 ### Task 2: Simplify Listener/Stream/Recorder and fix main.go
-- [ ] add doc comments on `Client`, `Listener`, `Recorder` explaining flow: Client fetches metadata + stream body → Listener combines into Stream → Recorder writes to disk
-- [ ] rename/inline in main.go: remove `myclient`/`streamlistener`, use short names or inline construction
-- [ ] add `Dbg bool` flag to opts (`--dbg`), replace `revision == "local"` debug logic
-- [ ] remove redundant `os.IsNotExist` check before `MkdirAll` in `recorder.go`
-- [ ] increase read buffer from 128 bytes to 32KB
-- [ ] run `go build ./app/...` — must compile
+- [x] add doc comments on `Client`, `Listener`, `Recorder` explaining flow: Client fetches metadata + stream body → Listener combines into Stream → Recorder writes to disk
+- [x] rename/inline in main.go: remove `myclient`/`streamlistener`, use short names or inline construction
+- [x] add `Dbg bool` flag to opts (`--dbg`), replace `revision == "local"` debug logic
+- [x] remove redundant `os.IsNotExist` check before `MkdirAll` in `recorder.go`
+- [x] increase read buffer from 128 bytes to 32KB
+- [x] run `go build ./app/...` — must compile
 
 ### Task 3: Fix context propagation in Recorder.Record
 - [ ] write test in `recorder_test.go`: cancel context during recording, verify it stops promptly

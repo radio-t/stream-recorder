@@ -23,18 +23,19 @@ var opts struct { //nolint:gochecknoglobals
 	Site   string `default:"https://radio-t.com/site-api/last/1"                                            description:"Radio-t API"         env:"SITE"   long:"site"`
 	Dir    string `default:"./"                                                                             description:"Recording directory" env:"DIR"    long:"dir"    short:"d"`
 	Port   string `description:"If provided will start API server on the port otherwise server is disabled" env:"PORT"                        long:"port"  short:"p"`
+	Dbg    bool   `description:"Enable debug logging"                                                       env:"DBG"                         long:"dbg"`
 }
 
 var revision = "local" //nolint: gochecknoglobals
 
 func main() {
-	if revision == "local" {
-		slog.SetLogLoggerLevel(slog.LevelDebug)
-	}
-
 	if _, err := flags.Parse(&opts); err != nil {
 		slog.Error("failed to parse flags", slog.String("err", err.Error()))
 		os.Exit(1)
+	}
+
+	if opts.Dbg {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 
 	slog.Info("Starting stream-recorder", slog.String("revision", revision))
@@ -42,11 +43,9 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	myclient := recorder.NewClient(http.DefaultClient, opts.Stream, opts.Site)
-
-	r := recorder.NewRecorder(opts.Dir)
-
-	streamlistener := recorder.NewListener(myclient)
+	client := recorder.NewClient(http.DefaultClient, opts.Stream, opts.Site)
+	rec := recorder.NewRecorder(opts.Dir)
+	listener := recorder.NewListener(client)
 
 	wg := sync.WaitGroup{}
 
@@ -77,7 +76,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		run(ctx, streamlistener, r)
+		run(ctx, listener, rec)
 	}()
 
 	wg.Wait()

@@ -15,7 +15,8 @@ type ClientService interface {
 	FetchStream(ctx context.Context) (io.ReadCloser, error)
 }
 
-// Listener represents a listener
+// Listener polls the SiteAPI for the current episode title, then opens the audio
+// stream and returns both as a Stream ready for recording.
 type Listener struct {
 	client ClientService
 }

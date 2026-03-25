@@ -11,9 +11,10 @@ import (
 	"time"
 )
 
-const buffer = 128
+const buffer = 32 * 1024 // 32KB read buffer
 
-// Recorder records a
+// Recorder writes a Stream's audio body to disk, creating one MP3 file per session
+// inside a per-episode subdirectory.
 type Recorder struct {
 	dir string
 }
@@ -28,11 +29,7 @@ func NewRecorder(dir string) *Recorder {
 func (r *Recorder) prepareFile(episode string) (*os.File, error) {
 	fileDir := path.Join(r.dir, episode)
 
-	_, err := os.Stat(fileDir)
-	if os.IsNotExist(err) {
-		err = os.MkdirAll(fileDir, 0o750)
-	}
-	if err != nil {
+	if err := os.MkdirAll(fileDir, 0o750); err != nil {
 		return nil, fmt.Errorf("failed to create %s directory: %w", fileDir, err)
 	}
 
