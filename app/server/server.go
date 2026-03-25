@@ -82,7 +82,7 @@ func listEpisodes(dir string) ([]episode, error) {
 		return nil, fmt.Errorf("reading main dir: %w", err)
 	}
 
-	var episodes []episode
+	episodes := make([]episode, 0, len(dirs))
 	for _, d := range dirs {
 		if !d.IsDir() {
 			continue
@@ -187,7 +187,7 @@ func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	dirPath := path.Join(s.dir, folder)
-	fi, err := os.Stat(dirPath) //nolint:gosec // folder validated above: no ".." or "/"
+	fi, err := os.Stat(dirPath) //nolint:gosec,nolintlint // folder validated above: no ".." or "/"
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -204,6 +204,6 @@ func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) 
 	defer writer.Close() //nolint:errcheck
 
 	if err := writer.AddFS(os.DirFS(dirPath)); err != nil {
-		slog.Error("error creating zip", slog.String("error", err.Error())) //nolint:gosec // error from local filesystem, not user input
+		slog.Error("error creating zip", slog.String("error", err.Error())) //nolint:gosec,nolintlint // error from local filesystem
 	}
 }

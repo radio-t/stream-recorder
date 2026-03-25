@@ -62,7 +62,7 @@ func siteAPIMock() *httpClientMock {
 					Body:       io.NopCloser(strings.NewReader(`[{"title": "Radio-T 999"}]`)),
 				}, nil
 			}
-			return http.DefaultClient.Do(req) //nolint:gosec // test mock, not real SSRF
+			return http.DefaultClient.Do(req) //nolint:gosec,nolintlint // test mock proxies to real client
 		},
 	}
 }

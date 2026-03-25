@@ -299,12 +299,12 @@ func TestListEpisodes(t *testing.T) {
 			expected: []episode{{Name: "999", Files: []string{"a.mp3"}}},
 		},
 		{
-			name: "empty directory returns nil",
+			name: "empty directory returns empty slice",
 			setup: func(t *testing.T) string {
 				t.Helper()
 				return t.TempDir()
 			},
-			expected: nil,
+			expected: []episode{},
 		},
 		{
 			name: "non-existent directory returns error",
