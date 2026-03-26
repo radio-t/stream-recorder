@@ -9,17 +9,13 @@ Stream-recorder listens and records audio stream when it is available, saving ep
 
 ```
 Application Options:
-  -s, --stream=           Stream url (default: https://stream.radio-t.com) [$STREAM]
-      --site=             Radio-t API (default: https://radio-t.com/site-api/last/1) [$SITE]
-  -d, --dir=              Recording directory (default: ./) [$DIR]
-  -p, --port=             If provided will start API server on the port otherwise server is disabled [$PORT]
-      --dbg               Enable debug logging [$DBG]
-      --schedule-enabled  Enable time-based recording schedule [$SCHEDULE_ENABLED]
-      --schedule-day=     Day of week for the show (UTC) (default: saturday) [$SCHEDULE_DAY]
-      --schedule-hour=    Hour of show start in UTC (0-23) (default: 20) [$SCHEDULE_HOUR]
-      --before-hours=     Hours before show to start recording (default: 2) [$BEFORE_HOURS]
-      --after-hours=      Hours after show start to keep recording (default: 4) [$AFTER_HOURS]
-      --retention-days=   Delete recordings older than N days, 0=disabled (default: 30) [$RETENTION_DAYS]
+  -s, --stream=          Stream url (default: https://stream.radio-t.com) [$STREAM]
+      --site=            Radio-t API (default: https://radio-t.com/site-api/last/1) [$SITE]
+  -d, --dir=             Recording directory (default: ./) [$DIR]
+  -p, --port=            If provided will start API server on the port otherwise server is disabled [$PORT]
+      --dbg              Enable debug logging [$DBG]
+      --schedule         Enable time-based recording (Sat 20:00 UTC, 2h before / 4h after) [$SCHEDULE]
+      --retention-days=  Delete recordings older than N days, 0=disabled (default: 30) [$RETENTION_DAYS]
 ```
 
 ## Example
@@ -47,14 +43,7 @@ The main loop polls every 5 seconds. When the API reports a live stream, it reco
 
 ### Recording schedule
 
-When `--schedule-enabled` is set, recording only happens inside a configurable time window around the show. The window is calculated as:
-
-```
-start = schedule_day at (schedule_hour - before_hours) UTC
-end   = schedule_day at (schedule_hour + after_hours) UTC
-```
-
-With the defaults this means Saturday 18:00 to Sunday 00:00 UTC. Outside this window the recorder sleeps and skips polling.
+When `--schedule` is set, recording only happens inside a fixed time window around the [Radio-T show](https://radio-t.com/online/): Saturday 18:00 to Sunday 00:00 UTC (2 hours before and 4 hours after the 20:00 UTC start). Outside this window the recorder sleeps and skips polling.
 
 A manual recording can be triggered at any time via the `POST /record` endpoint or the button on the web UI, which overrides the schedule for one session.
 
