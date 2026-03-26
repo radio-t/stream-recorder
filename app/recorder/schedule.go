@@ -6,6 +6,7 @@ import "time"
 const hoursInWeek = 7 * 24
 
 // schedule constants for Radio-T show: Saturday 20:00 UTC, 2h before, 4h after
+// see https://radio-t.com/online/
 const (
 	showDay         = time.Saturday
 	showHour        = 20
