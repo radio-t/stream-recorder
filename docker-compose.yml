@@ -14,3 +14,4 @@ services:
       - DIR=/records
       #- SCHEDULE=true
       #- RETENTION_DAYS=30
+      #- NEWS_API=https://news.radio-t.com/api/v1

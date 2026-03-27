@@ -16,6 +16,8 @@ Application Options:
       --dbg              Enable debug logging [$DBG]
       --schedule         Enable time-based recording (Sat 20:00 UTC, 2h before / 4h after) [$SCHEDULE]
       --retention-days=  Delete recordings older than N days, 0=disabled (default: 30) [$RETENTION_DAYS]
+      --news=            News API base URL for chapter markers, empty to disable
+                         (default: https://news.radio-t.com/api/v1) [$NEWS_API]
 ```
 
 ## Example
@@ -78,6 +80,12 @@ The main loop polls every 5 seconds. When the API reports a live stream, it reco
 When `--schedule` is set, recording only happens inside a fixed time window around the [Radio-T show](https://radio-t.com/online/): Saturday 18:00 to Sunday 00:00 UTC (2 hours before and 4 hours after the 20:00 UTC start). Outside this window the recorder sleeps and skips polling.
 
 A manual recording can be triggered at any time via the `POST /record` endpoint or the button on the web UI, which overrides the schedule for one session.
+
+### Chapter markers
+
+When `--news` is set (default: `https://news.radio-t.com/api/v1`), the recorder tracks active topic changes via the Radio-T news API during recording. After the stream ends, ID3v2 chapter frames (CHAP + CTOC) are injected into the MP3 file so podcast players can display per-topic navigation. Each chapter includes the topic title and a link to the corresponding article.
+
+Set `--news ""` or `NEWS_API=""` to disable chapter tracking entirely.
 
 ### Auto-purge
 

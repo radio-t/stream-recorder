@@ -105,7 +105,7 @@ func TestFullPipeline(t *testing.T) {
 	require.NoError(t, err)
 
 	rec := recorder.NewRecorder(recordsPath)
-	err = rec.Record(recordCtx, stream)
+	_, err = rec.Record(recordCtx, stream)
 	require.ErrorIs(t, err, context.DeadlineExceeded, "recording should stop when context times out")
 
 	// verify episode directory created with correct name
@@ -220,7 +220,7 @@ func TestRecordingCancellation(t *testing.T) {
 	}()
 
 	start := time.Now()
-	err = rec.Record(recordCtx, stream)
+	_, err = rec.Record(recordCtx, stream)
 	elapsed := time.Since(start)
 
 	require.ErrorIs(t, err, context.Canceled, "Record should return context.Canceled")
