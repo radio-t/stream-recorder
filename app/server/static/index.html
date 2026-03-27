@@ -2,32 +2,70 @@
 <html>
   <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {{if or .Recording .RecordRequested}}<meta http-equiv="refresh" content="5">{{end}}
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
     />
+    <title>Stream Recorder</title>
   </head>
   <body>
-    <table>
-    <tr>
-      <th>Episode number</th>
-      <th>Files</th>
-    </tr>
-      {{range .Episodes}}
-        <tr>
-          <td colspan="2"><a href="/episode/{{ .Name }}">{{ .Name }}</a></td>
-        </tr>
-        {{range .Files}}
-          <tr><td></td><td>{{ . }}</td></tr>
-        {{end}}
+    <main class="container" style="max-width:720px;margin:auto">
+      <h1>Stream Recorder</h1>
+
+      {{if .ShowForceRecord}}
+      {{if .Recording}}
+      <div style="display:flex;gap:0.5rem;align-items:stretch">
+        <button disabled aria-busy="true" style="flex:1">Recording in progress...</button>
+        <a href="/live/Radio-T-{{.ActiveEpisode}}.mp3" role="button" class="outline">&#x25B6; Listen live</a>
+      </div>
+      {{else if .RecordRequested}}
+      <button disabled aria-busy="true" style="width:100%">Waiting for stream...</button>
       {{else}}
-        <tr>
-          <td colspan="2"><strong>no rows</strong></td>
-        </tr>
+      <form method="post" action="/record">
+        <button type="submit" style="width:100%">Start Recording</button>
+      </form>
       {{end}}
-    </table>
-    <form method="post" action="/record">
-      <button type="submit">Start Recording</button>
-    </form>
+      {{end}}
+
+      <table>
+        <thead>
+          <tr>
+            <th>Episode</th>
+            <th>Files</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{$active := .ActiveFile}}
+          {{range .Episodes}}
+            {{$ep := .Name}}
+            <tr>
+              <td><a href="/episode/{{$ep}}">{{$ep}}</a></td>
+              <td>
+                {{range .Files}}
+                  {{$key := printf "%s/%s" $ep .}}
+                  {{if eq $key $active}}
+                  <div aria-busy="true">
+                    <a href="/episode/{{$ep}}/{{.}}">{{.}}</a>
+                    <small><ins>recording</ins></small>
+                  </div>
+                  {{else}}
+                  <div>
+                    <a href="/episode/{{$ep}}/{{.}}?download" title="Download">&#x1F4BE;</a>
+                    <a href="/episode/{{$ep}}/{{.}}">{{.}}</a>
+                  </div>
+                  {{end}}
+                {{end}}
+              </td>
+            </tr>
+          {{else}}
+            <tr>
+              <td colspan="2"><strong>no rows</strong></td>
+            </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </main>
   </body>
 </html>

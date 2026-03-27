@@ -46,7 +46,7 @@ func (r *Recorder) prepareFile(episode string) (*os.File, error) {
 }
 
 // Record records a stream to a file, stopping when context is cancelled
-func (r *Recorder) Record(ctx context.Context, s *Stream) error { //nolint:gocyclo // complexity is inherent to correct io.Reader + context handling
+func (r *Recorder) Record(ctx context.Context, s *Stream) error { //nolint:gocyclo,funlen // complexity is inherent to correct io.Reader + context handling
 	var closeOnce sync.Once
 	closeBody := func() { closeOnce.Do(func() { s.Body.Close() }) } //nolint: errcheck,gosec
 	defer closeBody()
@@ -82,6 +82,10 @@ func (r *Recorder) Record(ctx context.Context, s *Stream) error { //nolint:gocyc
 		case <-done:
 		}
 	}()
+
+	if err := WriteID3v2Header(f, s.Number, time.Now()); err != nil {
+		return fmt.Errorf("failed to write ID3 header: %w", err)
+	}
 
 	slog.Info(fmt.Sprintf("started recording %s at %v", s.Number, time.Now().Format(time.RFC3339)))
 	for {

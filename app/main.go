@@ -59,14 +59,14 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	var forceRecord atomic.Bool
+	var forceRecord, recording atomic.Bool
 
 	client := recorder.NewClient(http.DefaultClient, opts.Stream, opts.Site)
 	rec := recorder.NewRecorder(opts.Dir)
 	listener := recorder.NewListener(client)
 
 	wg := sync.WaitGroup{}
-	startServer(ctx, &wg, &forceRecord)
+	startServer(ctx, &wg, opts.Port, opts.Dir, &forceRecord, &recording)
 	startPurge(ctx, &wg, purgeConfig{
 		dir:           opts.Dir,
 		retentionDays: opts.RetentionDays,
@@ -79,6 +79,7 @@ func main() {
 		tickInterval: 5 * time.Second, //nolint:mnd
 		nowFn:        time.Now,
 		forceRecord:  &forceRecord,
+		recording:    &recording,
 	}
 
 	wg.Add(1)
@@ -106,16 +107,17 @@ type runConfig struct {
 	tickInterval time.Duration
 	nowFn        func() time.Time
 	forceRecord  *atomic.Bool
+	recording    *atomic.Bool
 }
 
 // startServer starts the HTTP server if a port is configured.
-func startServer(ctx context.Context, wg *sync.WaitGroup, forceRecord *atomic.Bool) {
-	if opts.Port == "" {
+func startServer(ctx context.Context, wg *sync.WaitGroup, port, dir string, forceRecord, recording *atomic.Bool) {
+	if port == "" {
 		return
 	}
 	slog.Info("Healthcheck enabled")
 
-	s := server.NewServer(opts.Port, opts.Dir, forceRecord)
+	s := server.NewServer(port, dir, forceRecord, recording)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -215,16 +217,26 @@ func pollAndRecord(ctx context.Context, l streamListener, r streamRecorder, cfg 
 	case err != nil:
 		slog.Error("error while listening", slog.String("err", err.Error()))
 	default:
-		// clear force flag only after stream is found and recording begins
-		if forced {
-			cfg.forceRecord.Store(false)
+		return recordStream(ctx, r, stream, cfg, forced)
+	}
+	return false
+}
+
+// recordStream records a single stream session, managing force and recording flags.
+// returns true when the context is cancelled and the loop should exit.
+func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream, cfg runConfig, forced bool) bool {
+	if forced {
+		cfg.forceRecord.Store(false)
+	}
+	if cfg.recording != nil {
+		cfg.recording.Store(true)
+		defer cfg.recording.Store(false)
+	}
+	if err := r.Record(ctx, stream); err != nil {
+		if ctx.Err() != nil {
+			return true // clean shutdown
 		}
-		if err = r.Record(ctx, stream); err != nil {
-			if ctx.Err() != nil {
-				return true // clean shutdown
-			}
-			slog.Error("error while recording", slog.String("err", err.Error()))
-		}
+		slog.Error("error while recording", slog.String("err", err.Error()))
 	}
 	return false
 }

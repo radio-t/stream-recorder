@@ -8,6 +8,7 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -37,11 +38,13 @@ type Server struct {
 	template     *template.Template
 	warnCapacity int
 	forceRecord  *atomic.Bool
+	recording    *atomic.Bool
 }
 
 // NewServer creates a new server and sets up handlers.
 // forceRecord is an optional flag shared with the recording loop; POST /record sets it to true.
-func NewServer(port, dir string, forceRecord *atomic.Bool) *Server {
+// recording is an optional flag indicating whether a stream is currently being recorded.
+func NewServer(port, dir string, forceRecord, recording *atomic.Bool) *Server {
 	t, err := template.ParseFS(indexTemplateFS, "static/index.html")
 	if err != nil {
 		panic(fmt.Sprintf("failed to parse index template: %v", err))
@@ -52,10 +55,13 @@ func NewServer(port, dir string, forceRecord *atomic.Bool) *Server {
 		template:     t,
 		warnCapacity: 80, //nolint:mnd
 		forceRecord:  forceRecord,
+		recording:    recording,
 	}
 
 	router := routegroup.New(http.NewServeMux())
 	router.HandleFunc("GET /episode/{folder}", s.DownloadEpisodeHandler)
+	router.HandleFunc("GET /episode/{folder}/{file}", s.DownloadFileHandler)
+	router.HandleFunc("GET /live/{filename...}", s.LiveStreamHandler)
 	router.HandleFunc("GET /health", s.HealthHandler)
 	router.HandleFunc("GET /{$}", s.IndexHandler)
 	if forceRecord != nil {
@@ -118,9 +124,32 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
+	recording := s.recording != nil && s.recording.Load()
+
+	var activeFile, activeEpisode string
+	if recording && len(episodes) > 0 {
+		last := episodes[len(episodes)-1]
+		activeEpisode = last.Name
+		if len(last.Files) > 0 {
+			activeFile = last.Name + "/" + last.Files[len(last.Files)-1]
+		}
+	}
+
 	data := struct {
-		Episodes []episode
-	}{Episodes: episodes}
+		Episodes        []episode
+		ShowForceRecord bool
+		Recording       bool
+		RecordRequested bool
+		ActiveFile      string
+		ActiveEpisode   string
+	}{
+		Episodes:        episodes,
+		ShowForceRecord: s.forceRecord != nil,
+		Recording:       recording,
+		RecordRequested: s.forceRecord != nil && s.forceRecord.Load(),
+		ActiveFile:      activeFile,
+		ActiveEpisode:   activeEpisode,
+	}
 
 	var buf bytes.Buffer
 	if err := s.template.Execute(&buf, data); err != nil {
@@ -189,10 +218,120 @@ func getCapacity(dir string) (int, error) {
 	return capacity, nil
 }
 
+// validPathSegment returns true if the segment is safe to use in a file path.
+func validPathSegment(s string) bool {
+	return s != "" && s != "." && !strings.Contains(s, "..")
+}
+
+// DownloadFileHandler serves a single file from an episode directory.
+// if ?download is set, forces a download instead of inline playback.
+func (s *Server) DownloadFileHandler(w http.ResponseWriter, r *http.Request) {
+	folder, file := r.PathValue("folder"), r.PathValue("file")
+	if !validPathSegment(folder) || !validPathSegment(file) {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	filePath := path.Join(s.dir, folder, file)
+	fi, err := os.Stat(filePath) //nolint:gosec,nolintlint // path components validated above
+	if err != nil || fi.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+
+	if r.URL.Query().Has("download") {
+		w.Header().Set("Content-Disposition", "attachment; filename="+file)
+	}
+	http.ServeFile(w, r, filePath)
+}
+
+// LiveStreamHandler streams the currently recording file from its current write position.
+// returns 404 if nothing is being recorded.
+func (s *Server) LiveStreamHandler(w http.ResponseWriter, r *http.Request) {
+	if s.recording == nil || !s.recording.Load() {
+		http.Error(w, "not recording", http.StatusNotFound)
+		return
+	}
+
+	_, filePath := s.activeFileInfo()
+	if filePath == "" {
+		http.Error(w, "no active file", http.StatusNotFound)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	f, err := os.Open(filePath) //nolint:gosec // path from listEpisodes, not user input
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close() //nolint:errcheck
+
+	// seek to near the end to start from "now" rather than the beginning
+	fi, err := f.Stat()
+	if err == nil && fi.Size() > 0 {
+		f.Seek(fi.Size(), io.SeekStart) //nolint:errcheck,gosec // best-effort seek
+	}
+
+	w.Header().Set("Content-Type", "audio/mpeg")
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+
+	s.tailFile(f, w, r, flusher)
+}
+
+// activeFileInfo returns the episode name and absolute path of the file currently being recorded.
+func (s *Server) activeFileInfo() (episodeName, filePath string) {
+	episodes, err := listEpisodes(s.dir)
+	if err != nil || len(episodes) == 0 {
+		return "", ""
+	}
+	last := episodes[len(episodes)-1]
+	if len(last.Files) == 0 {
+		return "", ""
+	}
+	return last.Name, path.Join(s.dir, last.Name, last.Files[len(last.Files)-1])
+}
+
+// tailFile reads from f and writes to w, waiting for more data when EOF is reached
+// as long as recording is active.
+func (s *Server) tailFile(f *os.File, w http.ResponseWriter, r *http.Request, flusher http.Flusher) {
+	buf := make([]byte, 32*1024) //nolint:mnd
+	for {
+		n, readErr := f.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				return // client disconnected
+			}
+			flusher.Flush()
+		}
+
+		switch {
+		case readErr == nil:
+			continue
+		case readErr != io.EOF:
+			return // real read error
+		case s.recording == nil || !s.recording.Load():
+			return // recording finished, file is complete
+		}
+
+		// at EOF but still recording — wait for more data
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(250 * time.Millisecond): //nolint:mnd
+		}
+	}
+}
+
 // DownloadEpisodeHandler zips files for a single episode directory and downloads it
 func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) {
 	folder := r.PathValue("folder")
-	if folder == "" || folder == "." || strings.Contains(folder, "..") {
+	if !validPathSegment(folder) {
 		http.Error(w, "invalid episode", http.StatusBadRequest)
 		return
 	}
