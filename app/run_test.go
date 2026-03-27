@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -28,14 +29,14 @@ func (m *mockStreamListener) Listen(ctx context.Context) (*recorder.Stream, erro
 }
 
 type mockStreamRecorder struct {
-	recordFn func(ctx context.Context, s *recorder.Stream) error
+	recordFn func(ctx context.Context, s *recorder.Stream) (string, error)
 }
 
-func (m *mockStreamRecorder) Record(ctx context.Context, s *recorder.Stream) error {
+func (m *mockStreamRecorder) Record(ctx context.Context, s *recorder.Stream) (string, error) {
 	if m.recordFn != nil {
 		return m.recordFn(ctx, s)
 	}
-	return nil
+	return "", nil
 }
 
 func TestRun_NoSchedule(t *testing.T) {
@@ -118,9 +119,9 @@ func TestRun_ForceRecordOverridesSchedule(t *testing.T) {
 		},
 	}
 	mr := &mockStreamRecorder{
-		recordFn: func(_ context.Context, _ *recorder.Stream) error {
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
 			recorded.Store(true)
-			return nil
+			return "", nil
 		},
 	}
 
@@ -232,4 +233,301 @@ func makeTestFile(t *testing.T, dir, relPath string, modTime time.Time) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0o750))
 	require.NoError(t, os.WriteFile(fullPath, []byte("test data"), 0o600))
 	require.NoError(t, os.Chtimes(fullPath, modTime, modTime))
+}
+
+const testRecordedPath = "/tmp/test.mp3"
+
+// mockChapterProvider implements chapterProvider for testing.
+type mockChapterProvider struct {
+	runCalled chan struct{} // closed when Run starts
+	chapters  []recorder.Chapter
+}
+
+func (m *mockChapterProvider) Run(ctx context.Context) {
+	close(m.runCalled)
+	<-ctx.Done()
+}
+
+func (m *mockChapterProvider) Chapters() []recorder.Chapter {
+	return m.chapters
+}
+
+func TestPollAndRecord_WithChapterTracking(t *testing.T) {
+	chapters := []recorder.Chapter{
+		{Title: "Topic 1", Link: "https://example.com/1", Offset: 0},
+		{Title: "Topic 2", Link: "https://example.com/2", Offset: 5 * time.Minute},
+	}
+
+	tracker := &mockChapterProvider{
+		runCalled: make(chan struct{}),
+		chapters:  chapters,
+	}
+
+	var injectedPath string
+	var injectedChapters []recorder.Chapter
+
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+		},
+	}
+	mr := &mockStreamRecorder{
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
+			<-tracker.runCalled // wait for tracker to start
+			return testRecordedPath, nil
+		},
+	}
+
+	cfg := runConfig{
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        time.Now,
+		newChapterTracker: func() chapterProvider {
+			return tracker
+		},
+		injectChapters: func(path string, chs []recorder.Chapter) error {
+			injectedPath = path
+			injectedChapters = chs
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	done := pollAndRecord(ctx, ml, mr, cfg)
+
+	assert.False(t, done)
+	assert.Equal(t, testRecordedPath, injectedPath, "chapters should be injected into recorded file")
+	assert.Equal(t, chapters, injectedChapters, "all collected chapters should be passed to injection")
+}
+
+func TestPollAndRecord_ChapterTrackingDisabled(t *testing.T) {
+	var recorded bool
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+		},
+	}
+	mr := &mockStreamRecorder{
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
+			recorded = true
+			return testRecordedPath, nil
+		},
+	}
+
+	cfg := runConfig{
+		tickInterval:      10 * time.Millisecond,
+		nowFn:             time.Now,
+		newChapterTracker: nil, // disabled
+	}
+
+	ctx := context.Background()
+	done := pollAndRecord(ctx, ml, mr, cfg)
+
+	assert.False(t, done)
+	assert.True(t, recorded, "recording should work without chapter tracking")
+}
+
+func TestPollAndRecord_NoChaptersCollected(t *testing.T) {
+	tracker := &mockChapterProvider{
+		runCalled: make(chan struct{}),
+		chapters:  nil, // no chapters collected
+	}
+
+	var injectionCalled bool
+
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+		},
+	}
+	mr := &mockStreamRecorder{
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
+			<-tracker.runCalled
+			return testRecordedPath, nil
+		},
+	}
+
+	cfg := runConfig{
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        time.Now,
+		newChapterTracker: func() chapterProvider {
+			return tracker
+		},
+		injectChapters: func(_ string, _ []recorder.Chapter) error {
+			injectionCalled = true
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	pollAndRecord(ctx, ml, mr, cfg)
+
+	assert.False(t, injectionCalled, "injection should not be called when no chapters collected")
+}
+
+func TestPollAndRecord_ChapterTrackingRecordingFails(t *testing.T) {
+	tracker := &mockChapterProvider{
+		runCalled: make(chan struct{}),
+		chapters:  []recorder.Chapter{{Title: "Topic", Offset: 0}},
+	}
+
+	var injectionCalled bool
+
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+		},
+	}
+	mr := &mockStreamRecorder{
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
+			<-tracker.runCalled
+			return "", fmt.Errorf("recording failed")
+		},
+	}
+
+	cfg := runConfig{
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        time.Now,
+		newChapterTracker: func() chapterProvider {
+			return tracker
+		},
+		injectChapters: func(_ string, _ []recorder.Chapter) error {
+			injectionCalled = true
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	done := pollAndRecord(ctx, ml, mr, cfg)
+
+	assert.False(t, done)
+	assert.False(t, injectionCalled, "injection should not be called when recording fails")
+}
+
+func TestPollAndRecord_ChapterInjectionError(t *testing.T) {
+	tracker := &mockChapterProvider{
+		runCalled: make(chan struct{}),
+		chapters:  []recorder.Chapter{{Title: "Topic", Offset: 0}},
+	}
+
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+		},
+	}
+	mr := &mockStreamRecorder{
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
+			<-tracker.runCalled
+			return testRecordedPath, nil
+		},
+	}
+
+	cfg := runConfig{
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        time.Now,
+		newChapterTracker: func() chapterProvider {
+			return tracker
+		},
+		injectChapters: func(_ string, _ []recorder.Chapter) error {
+			return fmt.Errorf("injection failed")
+		},
+	}
+
+	ctx := context.Background()
+	done := pollAndRecord(ctx, ml, mr, cfg)
+
+	// injection error should be logged but not stop the recording loop
+	assert.False(t, done, "injection error should not stop the recording loop")
+}
+
+func TestPollAndRecord_ChapterInjectionOnContextCancel(t *testing.T) {
+	// verify chapters are injected when recording is stopped by context cancellation (SIGINT)
+	chapters := []recorder.Chapter{
+		{Title: "Topic 1", Link: "https://example.com/1", Offset: 0},
+		{Title: "Topic 2", Link: "https://example.com/2", Offset: 5 * time.Minute},
+	}
+
+	tracker := &mockChapterProvider{
+		runCalled: make(chan struct{}),
+		chapters:  chapters,
+	}
+
+	var injectedPath string
+	var injectedChapters []recorder.Chapter
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+		},
+	}
+	mr := &mockStreamRecorder{
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
+			<-tracker.runCalled
+			cancel() // simulate SIGINT
+			return testRecordedPath, ctx.Err()
+		},
+	}
+
+	cfg := runConfig{
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        time.Now,
+		newChapterTracker: func() chapterProvider {
+			return tracker
+		},
+		injectChapters: func(path string, chs []recorder.Chapter) error {
+			injectedPath = path
+			injectedChapters = chs
+			return nil
+		},
+	}
+
+	done := pollAndRecord(ctx, ml, mr, cfg)
+
+	assert.True(t, done, "should signal clean shutdown")
+	assert.Equal(t, testRecordedPath, injectedPath, "chapters should be injected even on context cancellation")
+	assert.Equal(t, chapters, injectedChapters, "all collected chapters should be passed to injection")
+}
+
+func TestRun_ChapterTrackingPerRecording(t *testing.T) {
+	// verify that a new tracker is created for each recording session
+	var trackerCount atomic.Int32
+	var recordCount atomic.Int32
+
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+		},
+	}
+	mr := &mockStreamRecorder{
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
+			recordCount.Add(1)
+			return testRecordedPath, nil
+		},
+	}
+
+	cfg := runConfig{
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        time.Now,
+		newChapterTracker: func() chapterProvider {
+			trackerCount.Add(1)
+			return &mockChapterProvider{
+				runCalled: make(chan struct{}),
+				chapters:  nil,
+			}
+		},
+		injectChapters: func(_ string, _ []recorder.Chapter) error {
+			return nil
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	run(ctx, ml, mr, cfg)
+
+	assert.Equal(t, trackerCount.Load(), recordCount.Load(),
+		"a new chapter tracker should be created for each recording")
+	assert.GreaterOrEqual(t, recordCount.Load(), int32(2),
+		"should have recorded at least twice in 100ms with 10ms tick")
 }

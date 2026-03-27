@@ -14,6 +14,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -91,7 +93,7 @@ func (s *Server) Stop(ctx context.Context) error {
 }
 
 // listEpisodes reads the directory and returns a list of episodes with their files
-func listEpisodes(dir string) ([]episode, error) {
+func listEpisodes(dir string) ([]episode, error) { //nolint:gocyclo // flat structure, readable as-is
 	dirs, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("reading main dir: %w", err)
@@ -108,10 +110,27 @@ func listEpisodes(dir string) ([]episode, error) {
 		}
 		var fileNames []string
 		for _, f := range files {
+			if strings.HasSuffix(f.Name(), ".tmp") {
+				continue // skip transient temp files (e.g. chapter injection)
+			}
 			fileNames = append(fileNames, f.Name())
 		}
 		episodes = append(episodes, episode{Name: d.Name(), Files: fileNames})
 	}
+
+	// sort episodes numerically so "1000" comes after "999"
+	sort.Slice(episodes, func(i, j int) bool {
+		ni, ei := strconv.Atoi(episodes[i].Name)
+		nj, ej := strconv.Atoi(episodes[j].Name)
+		if ei == nil && ej == nil {
+			return ni < nj
+		}
+		if ei != nil && ej != nil {
+			return episodes[i].Name < episodes[j].Name
+		}
+		return ei == nil // numeric names first
+	})
+
 	return episodes, nil
 }
 
@@ -220,7 +239,7 @@ func getCapacity(dir string) (int, error) {
 
 // validPathSegment returns true if the segment is safe to use in a file path.
 func validPathSegment(s string) bool {
-	return s != "" && s != "." && !strings.Contains(s, "..")
+	return s != "" && s != "." && !strings.Contains(s, "..") && !strings.Contains(s, "/")
 }
 
 // DownloadFileHandler serves a single file from an episode directory.
@@ -240,7 +259,7 @@ func (s *Server) DownloadFileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Query().Has("download") {
-		w.Header().Set("Content-Disposition", "attachment; filename="+file)
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", file))
 	}
 	http.ServeFile(w, r, filePath)
 }
@@ -348,12 +367,31 @@ func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", "attachment; filename="+folder+".zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", folder+".zip"))
 
 	writer := zip.NewWriter(w)
 	defer writer.Close() //nolint:errcheck
 
-	if err := writer.AddFS(os.DirFS(dirPath)); err != nil {
-		slog.Error("error creating zip", slog.String("error", err.Error())) //nolint:gosec,nolintlint // error from local filesystem
+	entries, readErr := os.ReadDir(dirPath)
+	if readErr != nil {
+		slog.Error("error reading episode dir for zip", slog.String("error", readErr.Error())) //nolint:gosec // error from local filesystem
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || strings.HasSuffix(entry.Name(), ".tmp") {
+			continue // skip transient temp files (e.g. chapter injection)
+		}
+		fp := path.Join(dirPath, entry.Name())
+		src, openErr := os.Open(fp) //nolint:gosec // folder validated above
+		if openErr != nil {
+			continue
+		}
+		dst, createErr := writer.Create(entry.Name())
+		if createErr != nil {
+			src.Close() //nolint:errcheck,gosec
+			continue
+		}
+		io.Copy(dst, src) //nolint:errcheck,gosec
+		src.Close()       //nolint:errcheck,gosec
 	}
 }
