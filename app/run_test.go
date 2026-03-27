@@ -61,7 +61,7 @@ func TestRun_NoSchedule(t *testing.T) {
 }
 
 func TestRun_ScheduleInsideWindow(t *testing.T) {
-	// Saturday 21:00 UTC — inside the hardcoded window (Sat 18:00 - Sun 00:00)
+	// saturday 21:00 UTC — inside the hardcoded window (Sat 18:00 - Sun 00:00)
 	fixedTime := time.Date(2026, 3, 28, 21, 0, 0, 0, time.UTC)
 
 	ml := &mockStreamListener{
@@ -85,7 +85,7 @@ func TestRun_ScheduleInsideWindow(t *testing.T) {
 }
 
 func TestRun_ScheduleOutsideWindow(t *testing.T) {
-	// Monday 10:00 UTC — outside the hardcoded window
+	// monday 10:00 UTC — outside the hardcoded window
 	fixedTime := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
 
 	ml := &mockStreamListener{
@@ -109,7 +109,7 @@ func TestRun_ScheduleOutsideWindow(t *testing.T) {
 }
 
 func TestRun_ForceRecordOverridesSchedule(t *testing.T) {
-	// Monday 10:00 UTC — outside the hardcoded window
+	// monday 10:00 UTC — outside the hardcoded window
 	fixedTime := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
 
 	var recorded atomic.Bool

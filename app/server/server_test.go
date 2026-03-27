@@ -7,14 +7,17 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // setupTestDir creates a temp directory with fake episode directories and files.
@@ -40,7 +43,7 @@ func setupTestDir(t *testing.T) string {
 
 func newTestServer(t *testing.T, dir string) *Server {
 	t.Helper()
-	return NewServer("0", dir, nil, nil)
+	return NewServer("0", dir, "", nil, nil)
 }
 
 func newRequest(t *testing.T, target string) *http.Request {
@@ -116,7 +119,7 @@ func TestIndexHandler(t *testing.T) {
 	t.Run("shows Start Recording button when forceRecord is set", func(t *testing.T) {
 		dir := setupTestDir(t)
 		var flag atomic.Bool
-		srv := NewServer("0", dir, &flag, nil)
+		srv := NewServer("0", dir, "", &flag, nil)
 
 		req := newRequest(t, "/")
 		rec := httptest.NewRecorder()
@@ -131,7 +134,7 @@ func TestIndexHandler(t *testing.T) {
 		var forceFlag atomic.Bool
 		var recFlag atomic.Bool
 		recFlag.Store(true)
-		srv := NewServer("0", dir, &forceFlag, &recFlag)
+		srv := NewServer("0", dir, "", &forceFlag, &recFlag)
 
 		req := newRequest(t, "/")
 		rec := httptest.NewRecorder()
@@ -146,7 +149,7 @@ func TestIndexHandler(t *testing.T) {
 		dir := setupTestDir(t)
 		var forceFlag atomic.Bool
 		forceFlag.Store(true)
-		srv := NewServer("0", dir, &forceFlag, nil)
+		srv := NewServer("0", dir, "", &forceFlag, nil)
 
 		req := newRequest(t, "/")
 		rec := httptest.NewRecorder()
@@ -155,6 +158,39 @@ func TestIndexHandler(t *testing.T) {
 		body := rec.Body.String()
 		assert.Contains(t, body, "Waiting for stream")
 		assert.Contains(t, body, "disabled")
+	})
+
+	t.Run("shows password field when auth enabled", func(t *testing.T) {
+		dir := setupTestDir(t)
+		var flag atomic.Bool
+		hash, hashErr := bcrypt.GenerateFromPassword([]byte("testpass"), bcrypt.MinCost)
+		require.NoError(t, hashErr)
+		srv := NewServer("0", dir, string(hash), &flag, nil)
+
+		req := newRequest(t, "/")
+		rec := httptest.NewRecorder()
+		srv.IndexHandler(rec, req)
+
+		body := rec.Body.String()
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, body, `type="password"`)
+		assert.Contains(t, body, `name="password"`)
+		assert.Contains(t, body, "Start Recording")
+	})
+
+	t.Run("no password field when auth disabled", func(t *testing.T) {
+		dir := setupTestDir(t)
+		var flag atomic.Bool
+		srv := NewServer("0", dir, "", &flag, nil)
+
+		req := newRequest(t, "/")
+		rec := httptest.NewRecorder()
+		srv.IndexHandler(rec, req)
+
+		body := rec.Body.String()
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, body, "Start Recording")
+		assert.NotContains(t, body, `type="password"`)
 	})
 
 	t.Run("non-root path returns 404", func(t *testing.T) {
@@ -296,7 +332,7 @@ func TestForceRecordHandler(t *testing.T) {
 	t.Run("POST /record sets force flag and redirects to index", func(t *testing.T) {
 		dir := t.TempDir()
 		var flag atomic.Bool
-		srv := NewServer("0", dir, &flag, nil)
+		srv := NewServer("0", dir, "", &flag, nil)
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
 		require.NoError(t, err)
@@ -309,13 +345,225 @@ func TestForceRecordHandler(t *testing.T) {
 
 	t.Run("route not registered when forceRecord is nil", func(t *testing.T) {
 		dir := t.TempDir()
-		srv := NewServer("0", dir, nil, nil)
+		srv := NewServer("0", dir, "", nil, nil)
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
 		require.NoError(t, err)
 
 		rec := serveHTTP(srv, req)
 		assert.NotEqual(t, http.StatusOK, rec.Code, "POST /record should not succeed when forceRecord is nil")
+	})
+}
+
+func TestCheckAuth(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("secret123"), bcrypt.MinCost)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		setup  func(t *testing.T) *http.Request
+		expect bool
+	}{
+		{
+			name: "correct password via form body",
+			setup: func(t *testing.T) *http.Request {
+				t.Helper()
+				body := strings.NewReader(url.Values{"password": {"secret123"}}.Encode())
+				req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", body)
+				require.NoError(t, err)
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				return req
+			},
+			expect: true,
+		},
+		{
+			name: "correct password via basic auth",
+			setup: func(t *testing.T) *http.Request {
+				t.Helper()
+				req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
+				require.NoError(t, err)
+				req.SetBasicAuth("any", "secret123")
+				return req
+			},
+			expect: true,
+		},
+		{
+			name: "wrong password via form body",
+			setup: func(t *testing.T) *http.Request {
+				t.Helper()
+				body := strings.NewReader(url.Values{"password": {"wrong"}}.Encode())
+				req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", body)
+				require.NoError(t, err)
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				return req
+			},
+			expect: false,
+		},
+		{
+			name: "wrong password via basic auth",
+			setup: func(t *testing.T) *http.Request {
+				t.Helper()
+				req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
+				require.NoError(t, err)
+				req.SetBasicAuth("any", "wrong")
+				return req
+			},
+			expect: false,
+		},
+		{
+			name: "correct password via query param is rejected",
+			setup: func(t *testing.T) *http.Request {
+				t.Helper()
+				req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record?password=secret123", http.NoBody)
+				require.NoError(t, err)
+				return req
+			},
+			expect: false,
+		},
+		{
+			name: "no credentials",
+			setup: func(t *testing.T) *http.Request {
+				t.Helper()
+				req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
+				require.NoError(t, err)
+				return req
+			},
+			expect: false,
+		},
+	}
+
+	dir := t.TempDir()
+	var flag atomic.Bool
+	srv := NewServer("0", dir, string(hash), &flag, nil)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := tc.setup(t)
+			assert.Equal(t, tc.expect, srv.checkAuth(req))
+		})
+	}
+}
+
+func TestForceRecordHandler_Auth(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("secret123"), bcrypt.MinCost)
+	require.NoError(t, err)
+
+	t.Run("returns 403 without credentials when auth enabled", func(t *testing.T) {
+		dir := t.TempDir()
+		var flag atomic.Bool
+		srv := NewServer("0", dir, string(hash), &flag, nil)
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
+		require.NoError(t, err)
+
+		rec := serveHTTP(srv, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+		assert.False(t, flag.Load(), "force record flag should not be set without credentials")
+	})
+
+	t.Run("returns 403 with wrong password when auth enabled", func(t *testing.T) {
+		dir := t.TempDir()
+		var flag atomic.Bool
+		srv := NewServer("0", dir, string(hash), &flag, nil)
+
+		body := strings.NewReader(url.Values{"password": {"wrong"}}.Encode())
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", body)
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rec := serveHTTP(srv, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+		assert.False(t, flag.Load(), "force record flag should not be set with wrong password")
+	})
+
+	t.Run("redirects with correct password via form body", func(t *testing.T) {
+		dir := t.TempDir()
+		var flag atomic.Bool
+		srv := NewServer("0", dir, string(hash), &flag, nil)
+
+		body := strings.NewReader(url.Values{"password": {"secret123"}}.Encode())
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", body)
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rec := serveHTTP(srv, req)
+		assert.Equal(t, http.StatusSeeOther, rec.Code)
+		assert.Equal(t, "/", rec.Header().Get("Location"))
+		assert.True(t, flag.Load(), "force record flag should be set with correct password")
+	})
+
+	t.Run("redirects with correct password via basic auth", func(t *testing.T) {
+		dir := t.TempDir()
+		var flag atomic.Bool
+		srv := NewServer("0", dir, string(hash), &flag, nil)
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
+		require.NoError(t, err)
+		req.SetBasicAuth("any", "secret123")
+
+		rec := serveHTTP(srv, req)
+		assert.Equal(t, http.StatusSeeOther, rec.Code)
+		assert.Equal(t, "/", rec.Header().Get("Location"))
+		assert.True(t, flag.Load(), "force record flag should be set with correct basic auth")
+	})
+
+	t.Run("works without credentials when auth disabled", func(t *testing.T) {
+		dir := t.TempDir()
+		var flag atomic.Bool
+		srv := NewServer("0", dir, "", &flag, nil)
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
+		require.NoError(t, err)
+
+		rec := serveHTTP(srv, req)
+		assert.Equal(t, http.StatusSeeOther, rec.Code)
+		assert.Equal(t, "/", rec.Header().Get("Location"))
+		assert.True(t, flag.Load(), "force record flag should be set without auth when disabled")
+	})
+}
+
+func TestGETEndpoints_WithAuthEnabled(t *testing.T) {
+	dir := setupTestDir(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("secret123"), bcrypt.MinCost)
+	require.NoError(t, err)
+
+	var forceFlag atomic.Bool
+	var recFlag atomic.Bool
+	srv := NewServer("0", dir, string(hash), &forceFlag, &recFlag)
+	srv.warnCapacity = 100
+
+	t.Run("index page accessible without credentials", func(t *testing.T) {
+		req := newRequest(t, "/")
+		rec := serveHTTP(srv, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Stream Recorder")
+	})
+
+	t.Run("health endpoint accessible without credentials", func(t *testing.T) {
+		req := newRequest(t, "/health")
+		rec := serveHTTP(srv, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("episode download accessible without credentials", func(t *testing.T) {
+		req := newRequest(t, "/episode/999")
+		rec := serveHTTP(srv, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "application/zip", rec.Header().Get("Content-Type"))
+	})
+
+	t.Run("file download accessible without credentials", func(t *testing.T) {
+		req := newRequest(t, "/episode/999/rt999_2025-01-01.mp3")
+		rec := serveHTTP(srv, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("live stream endpoint accessible without credentials", func(t *testing.T) {
+		req := newRequest(t, "/live/test.mp3")
+		rec := serveHTTP(srv, req)
+		// 404 because not recording, but NOT 403 - auth is not checked
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		assert.Contains(t, rec.Body.String(), "not recording")
 	})
 }
 
@@ -377,7 +625,7 @@ func TestLiveStreamHandler(t *testing.T) {
 		dir := t.TempDir()
 		var recording atomic.Bool
 		recording.Store(true)
-		srv := NewServer("0", dir, nil, &recording)
+		srv := NewServer("0", dir, "", nil, &recording)
 
 		req := newRequest(t, "/live/test.mp3")
 		rec := serveHTTP(srv, req)
@@ -389,7 +637,7 @@ func TestLiveStreamHandler(t *testing.T) {
 		dir := setupTestDir(t)
 		var recording atomic.Bool
 		recording.Store(true)
-		srv := NewServer("0", dir, nil, &recording)
+		srv := NewServer("0", dir, "", nil, &recording)
 
 		// stop recording after a short delay so tailFile exits
 		go func() {

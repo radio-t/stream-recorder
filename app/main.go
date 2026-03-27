@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jessevdk/go-flags"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/radio-t/stream-recorder/app/recorder"
 	"github.com/radio-t/stream-recorder/app/server"
@@ -28,6 +29,7 @@ var opts struct { //nolint:gochecknoglobals
 	Schedule      bool   `description:"Enable time-based recording (Sat 20:00 UTC, 2h before / 4h after)"         env:"SCHEDULE"                                                              long:"schedule"`
 	RetentionDays int    `default:"30"                                                                             description:"Delete recordings older than N days, 0=disabled"                env:"RETENTION_DAYS" long:"retention-days"`
 	NewsAPI       string `default:"https://news.radio-t.com/api/v1"                                                description:"News API base URL for chapter markers, empty to disable"       env:"NEWS_API"       long:"news"`
+	AuthPasswd    string `description:"bcrypt hash of password for POST /record auth"                                 env:"AUTH_PASSWD"                                                            long:"auth-passwd"`
 }
 
 var revision = "local" //nolint: gochecknoglobals
@@ -57,6 +59,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	if opts.AuthPasswd != "" {
+		if _, err := bcrypt.Cost([]byte(opts.AuthPasswd)); err != nil {
+			slog.Error("auth-passwd is not a valid bcrypt hash", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -68,7 +77,7 @@ func main() {
 	listener := recorder.NewListener(client)
 
 	wg := sync.WaitGroup{}
-	startServer(ctx, &wg, opts.Port, opts.Dir, &forceRecord, &recording)
+	startServer(ctx, &wg, opts.Port, opts.Dir, opts.AuthPasswd, &forceRecord, &recording)
 	startPurge(ctx, &wg, purgeConfig{
 		dir:           opts.Dir,
 		retentionDays: opts.RetentionDays,
@@ -134,13 +143,13 @@ func newRunConfig(schedule bool, forceRecord, recording *atomic.Bool, newsAPI st
 }
 
 // startServer starts the HTTP server if a port is configured.
-func startServer(ctx context.Context, wg *sync.WaitGroup, port, dir string, forceRecord, recording *atomic.Bool) {
+func startServer(ctx context.Context, wg *sync.WaitGroup, port, dir, authPasswd string, forceRecord, recording *atomic.Bool) {
 	if port == "" {
 		return
 	}
 	slog.Info("Healthcheck enabled")
 
-	s := server.NewServer(port, dir, forceRecord, recording)
+	s := server.NewServer(port, dir, authPasswd, forceRecord, recording)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

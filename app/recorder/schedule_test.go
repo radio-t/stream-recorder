@@ -20,52 +20,52 @@ func TestInScheduleWindow(t *testing.T) {
 	}{
 		{
 			name: "inside window, during show",
-			now:  time.Date(2026, 3, 28, 21, 0, 0, 0, time.UTC), // Saturday 21:00
+			now:  time.Date(2026, 3, 28, 21, 0, 0, 0, time.UTC), // saturday 21:00
 			want: true,
 		},
 		{
 			name: "inside window, at show start",
-			now:  time.Date(2026, 3, 28, 20, 0, 0, 0, time.UTC), // Saturday 20:00
+			now:  time.Date(2026, 3, 28, 20, 0, 0, 0, time.UTC), // saturday 20:00
 			want: true,
 		},
 		{
 			name: "inside window, at window start boundary",
-			now:  time.Date(2026, 3, 28, 18, 0, 0, 0, time.UTC), // Saturday 18:00
+			now:  time.Date(2026, 3, 28, 18, 0, 0, 0, time.UTC), // saturday 18:00
 			want: true,
 		},
 		{
 			name: "inside window, mid-hour",
-			now:  time.Date(2026, 3, 28, 19, 30, 0, 0, time.UTC), // Saturday 19:30
+			now:  time.Date(2026, 3, 28, 19, 30, 0, 0, time.UTC), // saturday 19:30
 			want: true,
 		},
 		{
 			name: "inside window, just before end",
-			now:  time.Date(2026, 3, 28, 23, 59, 0, 0, time.UTC), // Saturday 23:59
+			now:  time.Date(2026, 3, 28, 23, 59, 0, 0, time.UTC), // saturday 23:59
 			want: true,
 		},
 		{
 			name: "outside window, hour before start",
-			now:  time.Date(2026, 3, 28, 17, 0, 0, 0, time.UTC), // Saturday 17:00
+			now:  time.Date(2026, 3, 28, 17, 0, 0, 0, time.UTC), // saturday 17:00
 			want: false,
 		},
 		{
 			name: "outside window, at end boundary (exclusive)",
-			now:  time.Date(2026, 3, 29, 0, 0, 0, 0, time.UTC), // Sunday 00:00
+			now:  time.Date(2026, 3, 29, 0, 0, 0, 0, time.UTC), // sunday 00:00
 			want: false,
 		},
 		{
 			name: "outside window, Monday",
-			now:  time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC), // Monday 10:00
+			now:  time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC), // monday 10:00
 			want: false,
 		},
 		{
 			name: "outside window, Saturday morning",
-			now:  time.Date(2026, 3, 28, 10, 0, 0, 0, time.UTC), // Saturday 10:00
+			now:  time.Date(2026, 3, 28, 10, 0, 0, 0, time.UTC), // saturday 10:00
 			want: false,
 		},
 		{
 			name: "outside window, Sunday afternoon",
-			now:  time.Date(2026, 3, 29, 14, 0, 0, 0, time.UTC), // Sunday 14:00
+			now:  time.Date(2026, 3, 29, 14, 0, 0, 0, time.UTC), // sunday 14:00
 			want: false,
 		},
 		{
