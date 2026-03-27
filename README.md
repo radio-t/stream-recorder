@@ -31,13 +31,45 @@ make build
 docker compose up --detach
 ```
 
+## Testing with a live stream
+
+To test locally without waiting for the Radio-T broadcast, use any Icecast/Shoutcast stream together with a mock site API:
+
+```bash
+# start a mock site API that returns a fake episode title
+python3 -c '
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps([{"title": "Podcast 999"}]).encode())
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", 9999), H).serve_forever()
+' &
+
+# run the recorder against a public stream
+./streamrecorder \
+  --stream http://ice1.somafm.com/groovesalad-256-mp3 \
+  --site http://127.0.0.1:9999/ \
+  --dir ./records --port 8080 --dbg
+```
+
+The mock API returns `[{"title": "Podcast 999"}]`, so recordings appear under `records/999/`. Open http://localhost:8080 to see the web UI.
+
+Some public Icecast streams suitable for testing:
+
+- `http://ice1.somafm.com/groovesalad-256-mp3` — SomaFM Groove Salad (ambient)
+- `http://stream.radioparadise.com/mp3-192` — Radio Paradise
+
 ## Architecture
 
 The recorder consists of three cooperating components:
 
 - **Client** fetches episode metadata from the Radio-T API and the raw audio stream
 - **Listener** combines the two client calls into a `Stream` (episode number + audio body)
-- **Recorder** writes the stream body to disk as `rt{episode}_{datetime}.mp3`
+- **Recorder** writes the stream body to disk as `rt{episode}_{datetime}.mp3` with ID3v2 metadata (title, artist, recording date)
 
 The main loop polls every 5 seconds. When the API reports a live stream, it records until the stream ends or the context is cancelled.
 
@@ -55,7 +87,9 @@ On startup and every 24 hours the recorder deletes recordings older than `--rete
 
 When `--port` is provided, the server exposes:
 
-- `GET /` - web UI listing recorded episodes (PicoCSS)
+- `GET /` - web UI listing recorded episodes with playback and download links (PicoCSS)
 - `GET /health` - health check (returns 200 if disk usage < 80%, 500 otherwise)
 - `GET /episode/<name>` - download entire episode directory as ZIP archive
+- `GET /episode/<name>/<file>` - play or download a single recording (`?download` forces download)
+- `GET /live/<filename>` - stream the active recording from the current write position
 - `POST /record` - trigger an immediate recording session (overrides schedule window)

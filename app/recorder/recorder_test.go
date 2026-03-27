@@ -35,10 +35,12 @@ func TestRecorder(t *testing.T) {
 	assert.True(t, strings.HasPrefix(entries[0].Name(), "rttestrecord_"))
 	assert.True(t, strings.HasSuffix(entries[0].Name(), ".mp3"))
 
-	// verify file content matches what was written
+	// verify file starts with ID3 header and contains the audio data
 	data, err := os.ReadFile(filepath.Join(dir, "testrecord", entries[0].Name())) //nolint:gosec
 	require.NoError(t, err)
-	assert.Equal(t, "some audio data", string(data))
+	assert.Equal(t, "ID3", string(data[:3]), "file should start with ID3 header")
+	assert.Contains(t, string(data), "Radio-T testrecord", "ID3 header should contain episode title")
+	assert.True(t, strings.HasSuffix(string(data), "some audio data"), "file should end with audio data")
 }
 
 // slowReader blocks on reads until data is sent through a channel or context is cancelled.

@@ -39,7 +39,7 @@ func setupTestDir(t *testing.T) string {
 
 func newTestServer(t *testing.T, dir string) *Server {
 	t.Helper()
-	return NewServer("0", dir, nil)
+	return NewServer("0", dir, nil, nil)
 }
 
 func newRequest(t *testing.T, target string) *http.Request {
@@ -68,6 +68,7 @@ func TestIndexHandler(t *testing.T) {
 			name:     "lists episodes and files",
 			setup:    setupTestDir,
 			contains: []string{"999", "998", "rt999_2025-01-01.mp3", "rt999_2025-01-02.mp3", "rt998_2025-01-03.mp3"},
+			excludes: []string{"Start Recording"},
 			status:   http.StatusOK,
 		},
 		{
@@ -110,6 +111,50 @@ func TestIndexHandler(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("shows Start Recording button when forceRecord is set", func(t *testing.T) {
+		dir := setupTestDir(t)
+		var flag atomic.Bool
+		srv := NewServer("0", dir, &flag, nil)
+
+		req := newRequest(t, "/")
+		rec := httptest.NewRecorder()
+		srv.IndexHandler(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Start Recording")
+	})
+
+	t.Run("shows recording in progress status", func(t *testing.T) {
+		dir := setupTestDir(t)
+		var forceFlag atomic.Bool
+		var recFlag atomic.Bool
+		recFlag.Store(true)
+		srv := NewServer("0", dir, &forceFlag, &recFlag)
+
+		req := newRequest(t, "/")
+		rec := httptest.NewRecorder()
+		srv.IndexHandler(rec, req)
+
+		body := rec.Body.String()
+		assert.Contains(t, body, "Recording in progress")
+		assert.Contains(t, body, "disabled")
+	})
+
+	t.Run("shows record requested status", func(t *testing.T) {
+		dir := setupTestDir(t)
+		var forceFlag atomic.Bool
+		forceFlag.Store(true)
+		srv := NewServer("0", dir, &forceFlag, nil)
+
+		req := newRequest(t, "/")
+		rec := httptest.NewRecorder()
+		srv.IndexHandler(rec, req)
+
+		body := rec.Body.String()
+		assert.Contains(t, body, "Waiting for stream")
+		assert.Contains(t, body, "disabled")
+	})
 
 	t.Run("non-root path returns 404", func(t *testing.T) {
 		dir := setupTestDir(t)
@@ -250,7 +295,7 @@ func TestForceRecordHandler(t *testing.T) {
 	t.Run("POST /record sets force flag and redirects to index", func(t *testing.T) {
 		dir := t.TempDir()
 		var flag atomic.Bool
-		srv := NewServer("0", dir, &flag)
+		srv := NewServer("0", dir, &flag, nil)
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
 		require.NoError(t, err)
@@ -263,7 +308,7 @@ func TestForceRecordHandler(t *testing.T) {
 
 	t.Run("route not registered when forceRecord is nil", func(t *testing.T) {
 		dir := t.TempDir()
-		srv := NewServer("0", dir, nil)
+		srv := NewServer("0", dir, nil, nil)
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
 		require.NoError(t, err)

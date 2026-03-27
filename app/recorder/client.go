@@ -50,6 +50,7 @@ func (c *Client) FetchLatest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}
+	request.Header.Set("User-Agent", "stream-recorder")
 	res, err := c.client.Do(request)
 	if err != nil {
 		return "", fmt.Errorf("error making request: %w", err)
@@ -84,6 +85,7 @@ func (c *Client) FetchStream(ctx context.Context) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
+	req.Header.Set("User-Agent", "stream-recorder")
 
 	res, err := c.client.Do(req)
 	if err != nil {

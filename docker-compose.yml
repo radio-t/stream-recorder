@@ -9,6 +9,8 @@ services:
     volumes:
     - ./records:/records
 
-    command: >
-      --port 8080
-      --dir /records
+    environment:
+      - PORT=8080
+      - DIR=/records
+      #- SCHEDULE=true
+      #- RETENTION_DAYS=30
