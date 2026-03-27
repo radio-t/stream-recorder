@@ -9,11 +9,13 @@ Stream-recorder listens and records audio stream when it is available, saving ep
 
 ```
 Application Options:
-  -s, --stream= Stream url (default: https://stream.radio-t.com) [$STREAM]
-      --site=   Radio-t API (default: https://radio-t.com/site-api/last/1) [$SITE]
-  -d, --dir=    Recording directory (default: ./) [$DIR]
-  -p, --port=   If provided will start API server on the port otherwise server is disabled [$PORT]
-      --dbg     Enable debug logging [$DBG]
+  -s, --stream=          Stream url (default: https://stream.radio-t.com) [$STREAM]
+      --site=            Radio-t API (default: https://radio-t.com/site-api/last/1) [$SITE]
+  -d, --dir=             Recording directory (default: ./) [$DIR]
+  -p, --port=            If provided will start API server on the port otherwise server is disabled [$PORT]
+      --dbg              Enable debug logging [$DBG]
+      --schedule         Enable time-based recording (Sat 20:00 UTC, 2h before / 4h after) [$SCHEDULE]
+      --retention-days=  Delete recordings older than N days, 0=disabled (default: 30) [$RETENTION_DAYS]
 ```
 
 ## Example
@@ -39,6 +41,16 @@ The recorder consists of three cooperating components:
 
 The main loop polls every 5 seconds. When the API reports a live stream, it records until the stream ends or the context is cancelled.
 
+### Recording schedule
+
+When `--schedule` is set, recording only happens inside a fixed time window around the [Radio-T show](https://radio-t.com/online/): Saturday 18:00 to Sunday 00:00 UTC (2 hours before and 4 hours after the 20:00 UTC start). Outside this window the recorder sleeps and skips polling.
+
+A manual recording can be triggered at any time via the `POST /record` endpoint or the button on the web UI, which overrides the schedule for one session.
+
+### Auto-purge
+
+On startup and every 24 hours the recorder deletes recordings older than `--retention-days` (default 30). Empty episode directories are removed as well. Set `--retention-days 0` to disable purging.
+
 ## API Endpoints
 
 When `--port` is provided, the server exposes:
@@ -46,3 +58,4 @@ When `--port` is provided, the server exposes:
 - `GET /` - web UI listing recorded episodes (PicoCSS)
 - `GET /health` - health check (returns 200 if disk usage < 80%, 500 otherwise)
 - `GET /episode/<name>` - download entire episode directory as ZIP archive
+- `POST /record` - trigger an immediate recording session (overrides schedule window)
