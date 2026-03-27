@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -46,6 +47,7 @@ type Server struct {
 	forceRecord  *atomic.Bool
 	recording    *atomic.Bool
 	done         chan struct{}
+	closeOnce    sync.Once
 }
 
 // NewServer creates a new server and sets up handlers.
@@ -117,7 +119,7 @@ func (s *Server) Start() error {
 
 // Stop shuts down the server and releases background resources
 func (s *Server) Stop(ctx context.Context) error {
-	close(s.done)
+	s.closeOnce.Do(func() { close(s.done) })
 	return s.srv.Shutdown(ctx)
 }
 
