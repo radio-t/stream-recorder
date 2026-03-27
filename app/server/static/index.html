@@ -25,10 +25,9 @@
       {{else}}
       <form method="post" action="/record">
         {{if .AuthEnabled}}
-        <div style="display:flex;gap:0.5rem;align-items:stretch">
-          <input type="password" name="password" placeholder="Password" aria-label="Password" required style="flex:1;margin-bottom:0">
-          <button type="submit">Start Recording</button>
-        </div>
+        <label for="rec-password">Password</label>
+        <input type="password" id="rec-password" name="password" placeholder="enter password to start recording" required>
+        <button type="submit" style="width:100%">Start Recording</button>
         {{else}}
         <button type="submit" style="width:100%">Start Recording</button>
         {{end}}
