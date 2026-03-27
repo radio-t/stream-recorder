@@ -15,3 +15,4 @@ services:
       #- SCHEDULE=true
       #- RETENTION_DAYS=30
       #- NEWS_API=https://news.radio-t.com/api/v1
+      #- AUTH_PASSWD=$$2y$$10$$... # bcrypt hash for POST /record auth (use $$ to escape $ in compose)

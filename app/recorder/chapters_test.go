@@ -141,7 +141,7 @@ func TestChapterTracker_ContextCancellation(t *testing.T) {
 
 	select {
 	case <-done:
-		// Run returned as expected
+		// run returned as expected
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after context cancellation")
 	}

@@ -5,3 +5,6 @@ bin
 tmp
 .air.toml
 .pre-commit-config.yaml
+
+# ralphex progress logs
+.ralphex/progress/

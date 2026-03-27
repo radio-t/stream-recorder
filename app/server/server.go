@@ -17,11 +17,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/didip/tollbooth/v8"
+	"github.com/didip/tollbooth/v8/limiter"
 	"github.com/go-pkgz/routegroup"
+	"golang.org/x/crypto/bcrypt"
 )
 
 //go:embed static/index.html
@@ -39,14 +43,18 @@ type Server struct {
 	srv          *http.Server
 	template     *template.Template
 	warnCapacity int
+	authPasswd   string // bcrypt hash; empty means auth disabled
 	forceRecord  *atomic.Bool
 	recording    *atomic.Bool
+	done         chan struct{}
+	closeOnce    sync.Once
 }
 
 // NewServer creates a new server and sets up handlers.
+// authPasswd is a bcrypt hash; when non-empty, POST /record requires authentication.
 // forceRecord is an optional flag shared with the recording loop; POST /record sets it to true.
 // recording is an optional flag indicating whether a stream is currently being recorded.
-func NewServer(port, dir string, forceRecord, recording *atomic.Bool) *Server {
+func NewServer(port, dir, authPasswd string, forceRecord, recording *atomic.Bool) *Server {
 	t, err := template.ParseFS(indexTemplateFS, "static/index.html")
 	if err != nil {
 		panic(fmt.Sprintf("failed to parse index template: %v", err))
@@ -56,8 +64,10 @@ func NewServer(port, dir string, forceRecord, recording *atomic.Bool) *Server {
 		dir:          dir,
 		template:     t,
 		warnCapacity: 80, //nolint:mnd
+		authPasswd:   authPasswd,
 		forceRecord:  forceRecord,
 		recording:    recording,
+		done:         make(chan struct{}),
 	}
 
 	router := routegroup.New(http.NewServeMux())
@@ -67,7 +77,27 @@ func NewServer(port, dir string, forceRecord, recording *atomic.Bool) *Server {
 	router.HandleFunc("GET /health", s.HealthHandler)
 	router.HandleFunc("GET /{$}", s.IndexHandler)
 	if forceRecord != nil {
-		router.HandleFunc("POST /record", s.ForceRecordHandler)
+		recordHandler := http.HandlerFunc(s.ForceRecordHandler)
+		if authPasswd != "" {
+			// apply rate limiter (1 req/sec) to prevent brute force when auth is enabled
+			lmt := tollbooth.NewLimiter(1, &limiter.ExpirableOptions{DefaultExpirationTTL: time.Hour}) //nolint:exhaustruct // ExpireJobInterval is deprecated
+			// periodically evict expired token buckets to prevent memory growth from one-off IPs
+			go func() {
+				ticker := time.NewTicker(30 * time.Minute) //nolint:mnd
+				defer ticker.Stop()
+				for {
+					select {
+					case <-s.done:
+						return
+					case <-ticker.C:
+						lmt.DeleteExpiredTokenBuckets()
+					}
+				}
+			}()
+			router.Handle("POST /record", tollbooth.HTTPMiddleware(lmt)(recordHandler))
+		} else {
+			router.Handle("POST /record", recordHandler)
+		}
 	}
 
 	s.srv = &http.Server{ //nolint:exhaustruct
@@ -87,8 +117,9 @@ func (s *Server) Start() error {
 	return s.srv.ListenAndServe()
 }
 
-// Stop shuts down the server
+// Stop shuts down the server and releases background resources
 func (s *Server) Stop(ctx context.Context) error {
+	s.closeOnce.Do(func() { close(s.done) })
 	return s.srv.Shutdown(ctx)
 }
 
@@ -161,6 +192,7 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 		RecordRequested bool
 		ActiveFile      string
 		ActiveEpisode   string
+		AuthEnabled     bool
 	}{
 		Episodes:        episodes,
 		ShowForceRecord: s.forceRecord != nil,
@@ -168,6 +200,7 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 		RecordRequested: s.forceRecord != nil && s.forceRecord.Load(),
 		ActiveFile:      activeFile,
 		ActiveEpisode:   activeEpisode,
+		AuthEnabled:     s.authPasswd != "",
 	}
 
 	var buf bytes.Buffer
@@ -182,10 +215,38 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 }
 
 // ForceRecordHandler sets the force-record flag to trigger recording outside the schedule window.
+// when authPasswd is set, requires valid password via form body or basic auth header.
 func (s *Server) ForceRecordHandler(w http.ResponseWriter, r *http.Request) {
+	if s.authPasswd != "" && !s.checkAuth(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	s.forceRecord.Store(true)
 	slog.Info("force recording triggered via API")
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// checkAuth validates the password from form body or basic auth header against the bcrypt hash.
+func (s *Server) checkAuth(r *http.Request) bool {
+	// check form value first (web UI)
+	if pwd := r.PostFormValue("password"); pwd != "" {
+		if err := bcrypt.CompareHashAndPassword([]byte(s.authPasswd), []byte(pwd)); err != nil {
+			slog.Warn("auth failed", slog.String("source", "form"), slog.String("err", err.Error())) //nolint:gosec // error from bcrypt is not user-controlled
+			return false
+		}
+		return true
+	}
+
+	// check basic auth header (curl/API)
+	if _, pwd, ok := r.BasicAuth(); ok {
+		if err := bcrypt.CompareHashAndPassword([]byte(s.authPasswd), []byte(pwd)); err != nil {
+			slog.Warn("auth failed", slog.String("source", "basic-auth"), slog.String("err", err.Error())) //nolint:gosec // error from bcrypt is not user-controlled
+			return false
+		}
+		return true
+	}
+
+	return false
 }
 
 // HealthHandler returns 200 if disk usage is below warning threshold

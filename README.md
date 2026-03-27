@@ -18,6 +18,7 @@ Application Options:
       --retention-days=  Delete recordings older than N days, 0=disabled (default: 30) [$RETENTION_DAYS]
       --news=            News API base URL for chapter markers, empty to disable
                          (default: https://news.radio-t.com/api/v1) [$NEWS_API]
+      --auth-passwd=     bcrypt hash of password for POST /record auth [$AUTH_PASSWD]
 ```
 
 ## Example
@@ -101,3 +102,15 @@ When `--port` is provided, the server exposes:
 - `GET /episode/<name>/<file>` - play or download a single recording (`?download` forces download)
 - `GET /live/<filename>` - stream the active recording from the current write position
 - `POST /record` - trigger an immediate recording session (overrides schedule window)
+
+### Authentication
+
+When `--auth-passwd` is set to a bcrypt hash, `POST /record` requires a password. All GET endpoints remain open.
+
+The password can be provided in two ways:
+- **Form body** — the web UI submits a `password` field with the POST request
+- **Basic auth header** — for curl/API usage (username is ignored, only the password is compared)
+
+When auth is enabled, the web UI shows a password input field next to the "Start Recording" button. A rate limiter (1 req/sec) is applied to `POST /record` to prevent brute force.
+
+Generate a bcrypt hash: `htpasswd -nbBC 10 "" 'yourpassword' | cut -d: -f2`
