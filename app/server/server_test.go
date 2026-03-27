@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -316,6 +317,133 @@ func TestForceRecordHandler(t *testing.T) {
 		rec := serveHTTP(srv, req)
 		assert.NotEqual(t, http.StatusOK, rec.Code, "POST /record should not succeed when forceRecord is nil")
 	})
+}
+
+func TestDownloadFileHandler(t *testing.T) {
+	dir := setupTestDir(t)
+	srv := newTestServer(t, dir)
+
+	t.Run("serves file inline by default", func(t *testing.T) {
+		req := newRequest(t, "/episode/999/rt999_2025-01-01.mp3")
+		rec := serveHTTP(srv, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.NotContains(t, rec.Header().Get("Content-Disposition"), "attachment")
+		assert.Contains(t, rec.Body.String(), "fake mp3 data for rt999_2025-01-01.mp3")
+	})
+
+	t.Run("forces download with ?download query param", func(t *testing.T) {
+		req := newRequest(t, "/episode/999/rt999_2025-01-01.mp3?download")
+		rec := serveHTTP(srv, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Header().Get("Content-Disposition"), "attachment")
+	})
+
+	t.Run("non-existent file returns 404", func(t *testing.T) {
+		req := newRequest(t, "/episode/999/nonexistent.mp3")
+		rec := serveHTTP(srv, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("path traversal in file returns 400", func(t *testing.T) {
+		req := newRequest(t, "/episode/999/..%2F..%2Fetc")
+		rec := serveHTTP(srv, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("path traversal in folder returns 400", func(t *testing.T) {
+		req := newRequest(t, "/episode/..%2F999/file.mp3")
+		rec := serveHTTP(srv, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+}
+
+func TestLiveStreamHandler(t *testing.T) {
+	t.Run("returns 404 when not recording", func(t *testing.T) {
+		dir := setupTestDir(t)
+		srv := newTestServer(t, dir)
+
+		req := newRequest(t, "/live/test.mp3")
+		rec := serveHTTP(srv, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("returns 404 when recording flag set but no files", func(t *testing.T) {
+		dir := t.TempDir()
+		var recording atomic.Bool
+		recording.Store(true)
+		srv := NewServer("0", dir, nil, &recording)
+
+		req := newRequest(t, "/live/test.mp3")
+		rec := serveHTTP(srv, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("streams audio when recording then stops", func(t *testing.T) {
+		dir := setupTestDir(t)
+		var recording atomic.Bool
+		recording.Store(true)
+		srv := NewServer("0", dir, nil, &recording)
+
+		// stop recording after a short delay so tailFile exits
+		go func() {
+			time.Sleep(400 * time.Millisecond)
+			recording.Store(false)
+		}()
+
+		req := newRequest(t, "/live/test.mp3")
+		rec := serveHTTP(srv, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "audio/mpeg", rec.Header().Get("Content-Type"))
+		assert.Equal(t, "no-cache, no-store", rec.Header().Get("Cache-Control"))
+	})
+}
+
+func TestActiveFileInfo(t *testing.T) {
+	t.Run("returns empty when no episodes", func(t *testing.T) {
+		dir := t.TempDir()
+		srv := newTestServer(t, dir)
+
+		name, path := srv.activeFileInfo()
+		assert.Empty(t, name)
+		assert.Empty(t, path)
+	})
+
+	t.Run("returns last file of last episode", func(t *testing.T) {
+		dir := setupTestDir(t)
+		srv := newTestServer(t, dir)
+
+		name, filePath := srv.activeFileInfo()
+		assert.Equal(t, "999", name)
+		assert.Contains(t, filePath, "999")
+		assert.Contains(t, filePath, ".mp3")
+	})
+}
+
+func TestValidPathSegment(t *testing.T) {
+	tests := []struct {
+		input string
+		valid bool
+	}{
+		{"episode1", true},
+		{"file.mp3", true},
+		{"", false},
+		{".", false},
+		{"..", false},
+		{"../etc", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			assert.Equal(t, tc.valid, validPathSegment(tc.input))
+		})
+	}
 }
 
 func TestListEpisodes(t *testing.T) {
