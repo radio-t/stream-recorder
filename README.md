@@ -68,11 +68,12 @@ Some public Icecast streams suitable for testing:
 
 ## Architecture
 
-The recorder consists of three cooperating components:
+The codebase is split into four packages, each with a single responsibility:
 
-- **Client** fetches episode metadata from the Radio-T API and the raw audio stream
-- **Listener** combines the two client calls into a `Stream` (episode number + audio body)
-- **Recorder** writes the stream body to disk as `rt{episode}_{datetime}.mp3` with ID3v2 metadata (title, artist, recording date)
+- **recorder** — stream capture: `Client` fetches episode metadata from the Radio-T API and the raw audio stream, `Listener` combines the two calls into a `Stream`, and `Recorder` writes the body to disk as `rt{episode}_{datetime}.mp3` with an ID3v2 header
+- **chapters** — chapter markers: `NewsClient` polls the news API for active topic changes, `ChapterTracker` collects chapter entries during a recording, and `InjectChapters` rewrites the finished MP3 with ID3v2 CHAP/CTOC frames
+- **server** — HTTP server with web UI, health check, episode download/playback, live streaming, and the `POST /record` endpoint
+- **main** (app/) — CLI wiring, run loop, and schedule window check
 
 The main loop polls every 5 seconds. When the API reports a live stream, it records until the stream ends or the context is cancelled.
 

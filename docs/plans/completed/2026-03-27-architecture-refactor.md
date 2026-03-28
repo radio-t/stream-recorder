@@ -169,8 +169,8 @@
 
 ### Task 10: [Final] Update documentation
 
-- [ ] update README.md if package structure is referenced
-- [ ] move this plan to `docs/plans/completed/`
+- [x] update README.md if package structure is referenced
+- [x] move this plan to `docs/plans/completed/`
 
 ## Technical Details
 
