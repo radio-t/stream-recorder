@@ -248,6 +248,14 @@ func inScheduleWindow(now time.Time) bool {
 	return nowHour >= startHour || nowHour < endHour
 }
 
+// loopAction indicates whether the recording loop should continue or stop.
+type loopAction bool
+
+const (
+	continueLoop loopAction = false
+	stopLoop     loopAction = true
+)
+
 func run(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig, state *recordingState) {
 	ticker := time.NewTicker(cfg.tickInterval)
 	defer ticker.Stop()
@@ -257,7 +265,7 @@ func run(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig,
 			slog.Info("Shutting down")
 			return
 		case <-ticker.C:
-			if done := pollAndRecord(ctx, l, r, cfg, state); done {
+			if pollAndRecord(ctx, l, r, cfg, state) == stopLoop {
 				return
 			}
 		}
@@ -265,32 +273,32 @@ func run(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig,
 }
 
 // pollAndRecord checks the schedule, listens for a stream and records it.
-// returns true when the context is cancelled and the loop should exit.
-func pollAndRecord(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig, state *recordingState) bool {
+// returns stopLoop when the context is cancelled and the loop should exit.
+func pollAndRecord(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig, state *recordingState) loopAction {
 	forced := state.forceRecord != nil && state.forceRecord.Load()
 	if !forced && cfg.schedule && !inScheduleWindow(cfg.nowFn()) {
 		slog.Debug("outside recording window")
-		return false
+		return continueLoop
 	}
 
 	stream, err := l.Listen(ctx)
 	switch {
 	case errors.Is(err, recorder.ErrNotFound):
 		slog.Debug("stream is not available")
-		return false
+		return continueLoop
 	case err != nil:
 		slog.Error("error while listening", slog.String("err", err.Error()))
 	default:
 		return recordStream(ctx, r, stream, cfg, state, forced)
 	}
-	return false
+	return continueLoop
 }
 
 // recordStream records a single stream session, managing force and recording flags.
 // when chapter tracking is configured, starts a tracker goroutine alongside the recording
 // and injects collected chapters into the file after recording completes.
-// returns true when the context is cancelled and the loop should exit.
-func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream, cfg runConfig, state *recordingState, forced bool) bool {
+// returns stopLoop when the context is cancelled and the loop should exit.
+func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream, cfg runConfig, state *recordingState, forced bool) loopAction {
 	if forced {
 		state.forceRecord.Store(false)
 	}
@@ -327,14 +335,14 @@ func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream
 	if err != nil {
 		if ctx.Err() != nil {
 			maybeInjectChapters(tracker, filePath, cfg.injectChapters)
-			return true // clean shutdown
+			return stopLoop // clean shutdown
 		}
 		slog.Error("error while recording", slog.String("err", err.Error()))
-		return false
+		return continueLoop
 	}
 
 	maybeInjectChapters(tracker, filePath, cfg.injectChapters)
-	return false
+	return continueLoop
 }
 
 // maybeInjectChapters injects collected chapter markers into the recorded file.

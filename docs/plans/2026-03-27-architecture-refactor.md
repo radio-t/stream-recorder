@@ -141,10 +141,10 @@
 **Files:**
 - Modify: `app/main.go` (add type, update functions)
 
-- [ ] define `type loopAction bool` with constants `continueLoop loopAction = false` and `stopLoop loopAction = true`
-- [ ] change return type of `pollAndRecord` and `recordStream` from `bool` to `loopAction`
-- [ ] update the `run` loop to use `stopLoop` comparison
-- [ ] run tests and linter — must pass
+- [x] define `type loopAction bool` with constants `continueLoop loopAction = false` and `stopLoop loopAction = true`
+- [x] change return type of `pollAndRecord` and `recordStream` from `bool` to `loopAction`
+- [x] update the `run` loop to use `stopLoop` comparison
+- [x] run tests and linter — must pass
 
 ### Task 8: Fix path.Join and tailFile params
 

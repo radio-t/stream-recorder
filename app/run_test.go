@@ -293,9 +293,9 @@ func TestPollAndRecord_WithChapterTracking(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	done := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
+	action := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
-	assert.False(t, done)
+	assert.Equal(t, continueLoop, action)
 	assert.Equal(t, testRecordedPath, injectedPath, "chapters should be injected into recorded file")
 	assert.Equal(t, chaps, injectedChaps, "all collected chapters should be passed to injection")
 }
@@ -321,9 +321,9 @@ func TestPollAndRecord_ChapterTrackingDisabled(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	done := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
+	action := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
-	assert.False(t, done)
+	assert.Equal(t, continueLoop, action)
 	assert.True(t, recorded, "recording should work without chapter tracking")
 }
 
@@ -398,9 +398,9 @@ func TestPollAndRecord_ChapterTrackingRecordingFails(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	done := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
+	action := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
-	assert.False(t, done)
+	assert.Equal(t, continueLoop, action)
 	assert.False(t, injectionCalled, "injection should not be called when recording fails")
 }
 
@@ -434,10 +434,10 @@ func TestPollAndRecord_ChapterInjectionError(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	done := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
+	action := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
 	// injection error should be logged but not stop the recording loop
-	assert.False(t, done, "injection error should not stop the recording loop")
+	assert.Equal(t, continueLoop, action, "injection error should not stop the recording loop")
 }
 
 func TestPollAndRecord_ChapterInjectionOnContextCancel(t *testing.T) {
@@ -483,9 +483,9 @@ func TestPollAndRecord_ChapterInjectionOnContextCancel(t *testing.T) {
 		},
 	}
 
-	done := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
+	action := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
-	assert.True(t, done, "should signal clean shutdown")
+	assert.Equal(t, stopLoop, action, "should signal clean shutdown")
 	assert.Equal(t, testRecordedPath, injectedPath, "chapters should be injected even on context cancellation")
 	assert.Equal(t, chaps, injectedChaps, "all collected chapters should be passed to injection")
 }
