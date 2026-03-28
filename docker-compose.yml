@@ -4,7 +4,7 @@ services:
     container_name: streamrecorder
 
     ports:
-    - 8080:8080
+    - 8098:8080
 
     volumes:
     - ./records:/records
@@ -12,7 +12,9 @@ services:
     environment:
       - PORT=8080
       - DIR=/records
-      #- SCHEDULE=true
+      - DBG=true
+      - TZ=UTC
+      - SCHEDULE=true
       #- RETENTION_DAYS=30
       #- NEWS_API=https://news.radio-t.com/api/v1
       #- AUTH_PASSWD=$$2y$$10$$... # bcrypt hash for POST /record auth (use $$ to escape $ in compose)

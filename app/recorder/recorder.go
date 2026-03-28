@@ -136,7 +136,6 @@ func (r *Recorder) Record(ctx context.Context, s *Stream) (string, error) { //no
 			return "", fmt.Errorf("failed to read from stream: %w", readErr)
 		}
 	}
-	slog.Info(fmt.Sprintf("finished recording at %v", time.Now().Format(time.RFC3339)))
 
 	return f.Name(), nil
 }

@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -77,7 +78,7 @@ func main() {
 	listener := recorder.NewListener(client)
 
 	wg := sync.WaitGroup{}
-	startServer(ctx, &wg, opts.Port, opts.Dir, opts.AuthPasswd, &forceRecord, &recording)
+	startServer(ctx, &wg, opts.Port, opts.Dir, opts.AuthPasswd, &forceRecord, &recording, makeScheduleStatusFn(opts.Schedule))
 	startPurge(ctx, &wg, purgeConfig{
 		dir:           opts.Dir,
 		retentionDays: opts.RetentionDays,
@@ -86,7 +87,7 @@ func main() {
 	})
 
 	cfg := newRunConfig(opts.Schedule, opts.NewsAPI)
-	state := &recordingState{forceRecord: &forceRecord, recording: &recording}
+	state := &recordingState{forceRecord: &forceRecord, recording: &recording} //nolint:exhaustruct // wasInWindow, pollCount start at zero
 
 	wg.Add(1)
 	go func() {
@@ -126,6 +127,8 @@ type runConfig struct {
 type recordingState struct {
 	forceRecord *atomic.Bool
 	recording   *atomic.Bool
+	wasInWindow bool // tracks previous window state for transition logging
+	pollCount   int  // counts polls within current state for throttled debug logging
 }
 
 // newRunConfig creates a runConfig with standard defaults, optionally enabling chapter tracking.
@@ -147,13 +150,14 @@ func newRunConfig(schedule bool, newsAPI string) runConfig {
 }
 
 // startServer starts the HTTP server if a port is configured.
-func startServer(ctx context.Context, wg *sync.WaitGroup, port, dir, authPasswd string, forceRecord, recording *atomic.Bool) {
+func startServer(ctx context.Context, wg *sync.WaitGroup, port, dir, authPasswd string,
+	forceRecord, recording *atomic.Bool, scheduleFn func() server.ScheduleStatus) {
 	if port == "" {
 		return
 	}
 	slog.Info("Healthcheck enabled")
 
-	s := server.NewServer(port, dir, authPasswd, forceRecord, recording)
+	s := server.NewServer(port, dir, authPasswd, forceRecord, recording, scheduleFn)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -249,6 +253,78 @@ func inScheduleWindow(now time.Time) bool {
 	return nowHour >= startHour || nowHour < endHour
 }
 
+// timeToShow returns the duration until the show starts (Saturday showHour UTC).
+// returns 0 if the show has already started or it's not Saturday.
+func timeToShow(now time.Time) time.Duration {
+	now = now.UTC()
+	if now.Weekday() != showDay {
+		return 0
+	}
+	showStart := time.Date(now.Year(), now.Month(), now.Day(), showHour, 0, 0, 0, time.UTC)
+	if !showStart.After(now) {
+		return 0
+	}
+	return showStart.Sub(now)
+}
+
+// timeToNextWindow returns the duration until the next recording window opens.
+func timeToNextWindow(now time.Time) time.Duration {
+	now = now.UTC()
+	windowStartHour := showHour - showBeforeHours
+	daysUntilSat := int((showDay - now.Weekday() + 7) % 7)
+	windowStart := time.Date(now.Year(), now.Month(), now.Day()+daysUntilSat, windowStartHour, 0, 0, 0, time.UTC)
+	if !windowStart.After(now) {
+		windowStart = windowStart.AddDate(0, 0, 7)
+	}
+	return windowStart.Sub(now)
+}
+
+// fmtDuration formats a duration as a human-readable string like "1h32m" or "45m".
+func fmtDuration(d time.Duration) string {
+	d = d.Truncate(time.Minute)
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60 //nolint:mnd
+	if h > 0 {
+		return fmt.Sprintf("%dh%02dm", h, m)
+	}
+	return fmt.Sprintf("%dm", m)
+}
+
+// fmtBytes formats a byte count as a human-readable string.
+func fmtBytes(b int64) string {
+	const (
+		mb = 1024 * 1024
+		gb = 1024 * 1024 * 1024
+	)
+	switch {
+	case b >= gb:
+		return fmt.Sprintf("%.1fGB", float64(b)/float64(gb))
+	case b >= mb:
+		return fmt.Sprintf("%.1fMB", float64(b)/float64(mb))
+	default:
+		return fmt.Sprintf("%dB", b)
+	}
+}
+
+// makeScheduleStatusFn returns a function for the server to query schedule window status.
+// returns nil when schedule is disabled.
+func makeScheduleStatusFn(schedule bool) func() server.ScheduleStatus {
+	if !schedule {
+		return nil
+	}
+	return func() server.ScheduleStatus {
+		now := time.Now()
+		if !inScheduleWindow(now) {
+			return server.ScheduleStatus{} //nolint:exhaustruct // zero value means outside window
+		}
+		status := "show in progress"
+		if ttShow := timeToShow(now); ttShow > 0 {
+			status = fmtDuration(ttShow) + " to show"
+		}
+		return server.ScheduleStatus{InWindow: true, ShowStatus: status}
+	}
+}
+
 // loopAction indicates whether the recording loop should continue or stop.
 type loopAction bool
 
@@ -273,23 +349,59 @@ func run(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig,
 	}
 }
 
+// debugLogInterval controls how often repetitive debug messages are emitted (every N polls).
+// with a 5s tick interval this means debug messages appear roughly every minute.
+const debugLogInterval = 12
+
+// logWindowTransitions detects and logs recording window entry/exit transitions.
+// returns whether the current time is inside the recording window.
+func logWindowTransitions(cfg runConfig, state *recordingState) bool {
+	inWindow := !cfg.schedule || inScheduleWindow(cfg.nowFn())
+	if !cfg.schedule {
+		return inWindow
+	}
+
+	if inWindow && !state.wasInWindow {
+		state.pollCount = 0
+		if ttShow := timeToShow(cfg.nowFn()); ttShow > 0 {
+			slog.Info("entered recording window", slog.String("show_in", fmtDuration(ttShow)))
+		} else {
+			slog.Info("entered recording window, show in progress")
+		}
+	} else if !inWindow && state.wasInWindow {
+		state.pollCount = 0
+		slog.Info("exited recording window")
+	}
+	state.wasInWindow = inWindow
+	return inWindow
+}
+
 // pollAndRecord checks the schedule, listens for a stream and records it.
 // returns stopLoop when the context is cancelled and the loop should exit.
 func pollAndRecord(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig, state *recordingState) loopAction {
 	forced := state.forceRecord != nil && state.forceRecord.Load()
-	if !forced && cfg.schedule && !inScheduleWindow(cfg.nowFn()) {
-		slog.Debug("outside recording window")
+	inWindow := logWindowTransitions(cfg, state)
+
+	if !forced && !inWindow {
+		state.pollCount++
+		if state.pollCount == 1 || state.pollCount%debugLogInterval == 0 {
+			slog.Debug("outside recording window", slog.String("next_in", fmtDuration(timeToNextWindow(cfg.nowFn()))))
+		}
 		return continueLoop
 	}
 
 	stream, err := l.Listen(ctx)
 	switch {
 	case errors.Is(err, recorder.ErrNotFound):
-		slog.Debug("stream is not available")
+		state.pollCount++
+		if state.pollCount == 1 || state.pollCount%debugLogInterval == 0 {
+			slog.Debug("waiting for stream", slog.Int("checks", state.pollCount))
+		}
 		return continueLoop
 	case err != nil:
 		slog.Error("error while listening", slog.String("err", err.Error()))
 	default:
+		state.pollCount = 0
 		return recordStream(ctx, r, stream, cfg, state, forced)
 	}
 	return continueLoop
@@ -319,7 +431,9 @@ func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream
 		}()
 	}
 
+	startTime := cfg.nowFn()
 	filePath, err := r.Record(ctx, stream)
+	duration := cfg.nowFn().Sub(startTime)
 
 	// stop chapter tracker and wait for it to finish before reading chapters
 	if trackerCancel != nil {
@@ -335,17 +449,31 @@ func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream
 
 	if err != nil {
 		if ctx.Err() != nil {
+			logRecordingFinished("recording stopped", stream.Number, filePath, duration)
 			if filePath != "" {
 				maybeInjectChapters(tracker, filePath, cfg.injectChapters)
 			}
 			return stopLoop // clean shutdown
 		}
 		slog.Error("error while recording", slog.String("err", err.Error()))
+		slog.Info("stream lost, waiting for reconnect", slog.String("episode", stream.Number))
 		return continueLoop
 	}
 
+	logRecordingFinished("finished recording", stream.Number, filePath, duration)
 	maybeInjectChapters(tracker, filePath, cfg.injectChapters)
 	return continueLoop
+}
+
+// logRecordingFinished logs a recording completion message with duration and file size.
+func logRecordingFinished(msg, episode, filePath string, duration time.Duration) {
+	attrs := []any{slog.String("episode", episode), slog.String("duration", fmtDuration(duration))}
+	if filePath != "" {
+		if fi, err := os.Stat(filePath); err == nil {
+			attrs = append(attrs, slog.String("size", fmtBytes(fi.Size())))
+		}
+	}
+	slog.Info(msg, attrs...)
 }
 
 // maybeInjectChapters injects collected chapter markers into the recorded file.
