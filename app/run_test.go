@@ -57,7 +57,7 @@ func TestRun_NoSchedule(t *testing.T) {
 		nowFn:        time.Now,
 	}
 
-	run(ctx, ml, mr, cfg)
+	run(ctx, ml, mr, cfg, &recordingState{})
 	assert.Positive(t, ml.calls.Load(), "listener should be called when schedule is disabled")
 }
 
@@ -81,7 +81,7 @@ func TestRun_ScheduleInsideWindow(t *testing.T) {
 		nowFn:        func() time.Time { return fixedTime },
 	}
 
-	run(ctx, ml, mr, cfg)
+	run(ctx, ml, mr, cfg, &recordingState{})
 	assert.Positive(t, ml.calls.Load(), "listener should be called inside recording window")
 }
 
@@ -105,7 +105,7 @@ func TestRun_ScheduleOutsideWindow(t *testing.T) {
 		nowFn:        func() time.Time { return fixedTime },
 	}
 
-	run(ctx, ml, mr, cfg)
+	run(ctx, ml, mr, cfg, &recordingState{})
 	assert.Equal(t, int32(0), ml.calls.Load(), "listener should not be called outside recording window")
 }
 
@@ -136,10 +136,10 @@ func TestRun_ForceRecordOverridesSchedule(t *testing.T) {
 		schedule:     true,
 		tickInterval: 10 * time.Millisecond,
 		nowFn:        func() time.Time { return fixedTime },
-		forceRecord:  &forceFlag,
 	}
+	state := &recordingState{forceRecord: &forceFlag}
 
-	run(ctx, ml, mr, cfg)
+	run(ctx, ml, mr, cfg, state)
 
 	assert.True(t, recorded.Load(), "recording should happen outside window when force flag is set")
 	assert.False(t, forceFlag.Load(), "force flag should be cleared after recording session")
@@ -293,7 +293,7 @@ func TestPollAndRecord_WithChapterTracking(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	done := pollAndRecord(ctx, ml, mr, cfg)
+	done := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
 	assert.False(t, done)
 	assert.Equal(t, testRecordedPath, injectedPath, "chapters should be injected into recorded file")
@@ -321,7 +321,7 @@ func TestPollAndRecord_ChapterTrackingDisabled(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	done := pollAndRecord(ctx, ml, mr, cfg)
+	done := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
 	assert.False(t, done)
 	assert.True(t, recorded, "recording should work without chapter tracking")
@@ -360,7 +360,7 @@ func TestPollAndRecord_NoChaptersCollected(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	pollAndRecord(ctx, ml, mr, cfg)
+	pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
 	assert.False(t, injectionCalled, "injection should not be called when no chapters collected")
 }
@@ -398,7 +398,7 @@ func TestPollAndRecord_ChapterTrackingRecordingFails(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	done := pollAndRecord(ctx, ml, mr, cfg)
+	done := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
 	assert.False(t, done)
 	assert.False(t, injectionCalled, "injection should not be called when recording fails")
@@ -434,7 +434,7 @@ func TestPollAndRecord_ChapterInjectionError(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	done := pollAndRecord(ctx, ml, mr, cfg)
+	done := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
 	// injection error should be logged but not stop the recording loop
 	assert.False(t, done, "injection error should not stop the recording loop")
@@ -483,7 +483,7 @@ func TestPollAndRecord_ChapterInjectionOnContextCancel(t *testing.T) {
 		},
 	}
 
-	done := pollAndRecord(ctx, ml, mr, cfg)
+	done := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
 	assert.True(t, done, "should signal clean shutdown")
 	assert.Equal(t, testRecordedPath, injectedPath, "chapters should be injected even on context cancellation")
@@ -604,7 +604,7 @@ func TestRun_ChapterTrackingPerRecording(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	run(ctx, ml, mr, cfg)
+	run(ctx, ml, mr, cfg, &recordingState{})
 
 	assert.Equal(t, trackerCount.Load(), recordCount.Load(),
 		"a new chapter tracker should be created for each recording")

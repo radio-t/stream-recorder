@@ -98,12 +98,12 @@
 - Modify: `app/main.go` (split struct, update signatures)
 - Modify: `app/run_test.go` (update test setup)
 
-- [ ] create `recordingState` struct with `forceRecord *atomic.Bool` and `recording *atomic.Bool`
-- [ ] keep `runConfig` with only immutable fields: `schedule`, `tickInterval`, `nowFn`, `newChapterTracker`, `injectChapters`
-- [ ] update `run`, `pollAndRecord`, `recordStream` signatures to take both `runConfig` and `*recordingState`
-- [ ] update `newRunConfig` to return only config (state is created separately in `main`)
-- [ ] update all test call sites in `run_test.go`
-- [ ] run tests and linter — must pass
+- [x] create `recordingState` struct with `forceRecord *atomic.Bool` and `recording *atomic.Bool`
+- [x] keep `runConfig` with only immutable fields: `schedule`, `tickInterval`, `nowFn`, `newChapterTracker`, `injectChapters`
+- [x] update `run`, `pollAndRecord`, `recordStream` signatures to take both `runConfig` and `*recordingState`
+- [x] update `newRunConfig` to return only config (state is created separately in `main`)
+- [x] update all test call sites in `run_test.go`
+- [x] run tests and linter — must pass
 
 ### Task 5: Make Recorder.OnReady a constructor option
 
