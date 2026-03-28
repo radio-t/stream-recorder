@@ -94,6 +94,11 @@ func InjectChapters(filePath string, chapters []Chapter) error {
 		return nil
 	}
 
+	srcInfo, err := os.Stat(filePath)
+	if err != nil {
+		return fmt.Errorf("stat file for chapter injection: %w", err)
+	}
+
 	src, err := os.Open(filePath) //nolint:gosec // caller provides path
 	if err != nil {
 		return fmt.Errorf("open file for chapter injection: %w", err)
@@ -122,7 +127,15 @@ func InjectChapters(filePath string, chapters []Chapter) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, filePath)
+	if err := os.Chmod(tmpPath, srcInfo.Mode().Perm()); err != nil {
+		os.Remove(tmpPath) //nolint:errcheck,gosec
+		return fmt.Errorf("set permissions on temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		os.Remove(tmpPath) //nolint:errcheck,gosec
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+	return nil
 }
 
 // writeChapteredFile creates a temp file containing: updated ID3 header + existing frames +

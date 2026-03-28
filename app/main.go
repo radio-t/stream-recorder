@@ -141,6 +141,7 @@ func newRunConfig(schedule bool, newsAPI string) runConfig {
 			nc := chapters.NewNewsClient(http.DefaultClient, newsAPI)
 			return chapters.NewChapterTracker(nc, time.Now)
 		}
+		cfg.injectChapters = chapters.InjectChapters
 	}
 	return cfg
 }
@@ -334,7 +335,9 @@ func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream
 
 	if err != nil {
 		if ctx.Err() != nil {
-			maybeInjectChapters(tracker, filePath, cfg.injectChapters)
+			if filePath != "" {
+				maybeInjectChapters(tracker, filePath, cfg.injectChapters)
+			}
 			return stopLoop // clean shutdown
 		}
 		slog.Error("error while recording", slog.String("err", err.Error()))
@@ -348,15 +351,12 @@ func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream
 // maybeInjectChapters injects collected chapter markers into the recorded file.
 // does nothing when tracker is nil or no chapters were collected.
 func maybeInjectChapters(tracker chapterProvider, filePath string, inject func(string, []chapters.Chapter) error) {
-	if tracker == nil {
+	if tracker == nil || inject == nil {
 		return
 	}
 	chaps := tracker.Chapters()
 	if len(chaps) == 0 {
 		return
-	}
-	if inject == nil {
-		inject = chapters.InjectChapters
 	}
 	if err := inject(filePath, chaps); err != nil {
 		slog.Error("failed to inject chapters", slog.String("err", err.Error()))

@@ -23,7 +23,7 @@ type HTTPClient interface {
 // Client fetches episode metadata from the SiteAPI and the raw audio stream.
 type Client struct {
 	client     HTTPClient
-	Stream     string
+	stream     string
 	siteAPIURL string
 }
 
@@ -31,7 +31,7 @@ type Client struct {
 func NewClient(c HTTPClient, stream, site string) *Client {
 	return &Client{
 		client:     c,
-		Stream:     stream,
+		stream:     stream,
 		siteAPIURL: site,
 	}
 }
@@ -61,7 +61,7 @@ func (c *Client) FetchLatest(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("site API returned status %d", res.StatusCode)
 	}
 
-	body, err := io.ReadAll(res.Body)
+	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
 		return "", fmt.Errorf("error reading response: %w", err)
 	}
@@ -81,7 +81,7 @@ func (c *Client) FetchLatest(ctx context.Context) (string, error) {
 
 // FetchStream fetches the stream body
 func (c *Client) FetchStream(ctx context.Context) (io.ReadCloser, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Stream, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.stream, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}

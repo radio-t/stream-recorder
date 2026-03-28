@@ -694,6 +694,29 @@ func TestValidPathSegment(t *testing.T) {
 	}
 }
 
+func TestIsSubPath(t *testing.T) {
+	tests := []struct {
+		base, target string
+		want         bool
+	}{
+		{"/data", "/data/episode1", true},
+		{"/data", "/data/episode1/file.mp3", true},
+		{"/data", "/data", false},               // base itself is not "under" base
+		{"/data", "/data2/file", false},         // sibling directory
+		{"/data", "/other/file", false},         // completely different path
+		{"/data", "/data/../etc/passwd", false}, // traversal cleaned by filepath.Clean
+		{"data", "data/episode1", true},         // relative paths
+		{"data", "data/ep/file.mp3", true},
+		{"./", "999", true},          // default --dir value with clean join
+		{"./", "999/file.mp3", true}, // nested under default dir
+	}
+	for _, tc := range tests {
+		t.Run(tc.base+"_"+tc.target, func(t *testing.T) {
+			assert.Equal(t, tc.want, isSubPath(tc.base, tc.target))
+		})
+	}
+}
+
 func TestListEpisodes(t *testing.T) {
 	tests := []struct {
 		name     string
