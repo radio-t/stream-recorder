@@ -569,6 +569,140 @@ func TestInScheduleWindow(t *testing.T) {
 	}
 }
 
+func TestFmtDuration(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "0m"},
+		{30 * time.Second, "0m"},
+		{1 * time.Minute, "1m"},
+		{45 * time.Minute, "45m"},
+		{59 * time.Minute, "59m"},
+		{60 * time.Minute, "1h00m"},
+		{90 * time.Minute, "1h30m"},
+		{2*time.Hour + 15*time.Minute, "2h15m"},
+		{6*time.Hour + 45*time.Minute + 30*time.Second, "6h45m"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, fmtDuration(tt.d))
+		})
+	}
+}
+
+func TestFmtBytes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		b    int64
+		want string
+	}{
+		{0, "0B"},
+		{512, "512B"},
+		{1024 * 1024, "1.0MB"},
+		{1536 * 1024, "1.5MB"},
+		{1024 * 1024 * 1024, "1.0GB"},
+		{int64(1.5 * 1024 * 1024 * 1024), "1.5GB"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, fmtBytes(tt.b))
+		})
+	}
+}
+
+func TestTimeToShow(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Duration
+	}{
+		{"2h before show", time.Date(2026, 3, 28, 18, 0, 0, 0, time.UTC), 2 * time.Hour},
+		{"30m before show", time.Date(2026, 3, 28, 19, 30, 0, 0, time.UTC), 30 * time.Minute},
+		{"at show start", time.Date(2026, 3, 28, 20, 0, 0, 0, time.UTC), 0},
+		{"after show start", time.Date(2026, 3, 28, 21, 0, 0, 0, time.UTC), 0},
+		{"not saturday", time.Date(2026, 3, 30, 18, 0, 0, 0, time.UTC), 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, timeToShow(tt.now))
+		})
+	}
+}
+
+func TestTimeToNextWindow(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Duration
+	}{
+		{
+			name: "monday morning",
+			now:  time.Date(2026, 3, 23, 10, 0, 0, 0, time.UTC), // monday 10:00
+			want: 5*24*time.Hour + 8*time.Hour,                  // 5 days + 8h to sat 18:00
+		},
+		{
+			name: "saturday before window",
+			now:  time.Date(2026, 3, 28, 17, 0, 0, 0, time.UTC), // saturday 17:00
+			want: 1 * time.Hour,                                 // 1h to 18:00
+		},
+		{
+			name: "inside window returns next week",
+			now:  time.Date(2026, 3, 28, 19, 0, 0, 0, time.UTC), // saturday 19:00
+			want: 6*24*time.Hour + 23*time.Hour,                 // next sat 18:00
+		},
+		{
+			name: "sunday after window",
+			now:  time.Date(2026, 3, 29, 1, 0, 0, 0, time.UTC), // sunday 01:00
+			want: 6*24*time.Hour + 17*time.Hour,                // next sat 18:00 (6 days + 17h)
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, timeToNextWindow(tt.now))
+		})
+	}
+}
+
+func TestPollAndRecord_WindowTransitionLogging(t *testing.T) {
+	// verify that pollCount resets on window transition and listener is not called outside window
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return nil, recorder.ErrNotFound
+		},
+	}
+	mr := &mockStreamRecorder{}
+
+	// start outside window (monday), then transition to inside (saturday)
+	currentTime := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC) // monday
+	cfg := runConfig{
+		schedule:     true,
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        func() time.Time { return currentTime },
+	}
+	state := &recordingState{}
+
+	// poll outside window
+	pollAndRecord(context.Background(), ml, mr, cfg, state)
+	assert.False(t, state.wasInWindow, "should track that we're outside window")
+	assert.Equal(t, 1, state.pollCount, "poll count should increment outside window")
+	assert.Equal(t, int32(0), ml.calls.Load(), "listener should not be called outside window")
+
+	// transition to inside window
+	currentTime = time.Date(2026, 3, 28, 21, 0, 0, 0, time.UTC) // saturday 21:00
+	pollAndRecord(context.Background(), ml, mr, cfg, state)
+	assert.True(t, state.wasInWindow, "should track that we're inside window")
+	assert.Equal(t, 1, state.pollCount, "poll count should reset on window entry then increment")
+	assert.Equal(t, int32(1), ml.calls.Load(), "listener should be called inside window")
+}
+
 func TestRun_ChapterTrackingPerRecording(t *testing.T) {
 	// verify that a new tracker is created for each recording session
 	var trackerCount atomic.Int32

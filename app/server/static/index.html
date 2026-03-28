@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {{if or .Recording .RecordRequested}}<meta http-equiv="refresh" content="5">{{end}}
+    {{if or .Recording .RecordRequested}}<meta http-equiv="refresh" content="5">{{else if .InWindow}}<meta http-equiv="refresh" content="60">{{end}}
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
@@ -12,7 +12,7 @@
   </head>
   <body>
     <main class="container" style="max-width:720px;margin:auto">
-      <h1>Stream Recorder</h1>
+      <h1>Stream Recorder{{if .InWindow}} <small><mark>LIVE WINDOW · {{.ShowStatus}}</mark></small>{{end}}</h1>
 
       {{if .ShowForceRecord}}
       {{if .Recording}}

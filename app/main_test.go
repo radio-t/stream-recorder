@@ -139,7 +139,7 @@ func TestFullPipeline(t *testing.T) {
 
 	// start server and verify HTTP endpoints
 	port := freePort(t)
-	srv := server.NewServer(strconv.Itoa(port), recordsPath, "", nil, nil)
+	srv := server.NewServer(strconv.Itoa(port), recordsPath, "", nil, nil, nil)
 	go func() { _ = srv.Start() }()
 	defer func() { _ = srv.Stop(context.Background()) }()
 

@@ -36,37 +36,46 @@ type episode struct {
 	Files []string
 }
 
+// ScheduleStatus represents the current state of the recording window.
+type ScheduleStatus struct {
+	InWindow   bool
+	ShowStatus string // e.g. "32m to show" or "show in progress"
+}
+
 // Server is the main struct for the server
 type Server struct {
-	dir          string
-	srv          *http.Server
-	template     *template.Template
-	warnCapacity int
-	authPasswd   string // bcrypt hash; empty means auth disabled
-	forceRecord  *atomic.Bool
-	recording    *atomic.Bool
-	done         chan struct{}
-	closeOnce    sync.Once
+	dir            string
+	srv            *http.Server
+	template       *template.Template
+	warnCapacity   int
+	authPasswd     string // bcrypt hash; empty means auth disabled
+	forceRecord    *atomic.Bool
+	recording      *atomic.Bool
+	scheduleStatus func() ScheduleStatus // nil when schedule is disabled
+	done           chan struct{}
+	closeOnce      sync.Once
 }
 
 // NewServer creates a new server and sets up handlers.
 // authPasswd is a bcrypt hash; when non-empty, POST /record requires authentication.
 // forceRecord is an optional flag shared with the recording loop; POST /record sets it to true.
 // recording is an optional flag indicating whether a stream is currently being recorded.
-func NewServer(port, dir, authPasswd string, forceRecord, recording *atomic.Bool) *Server {
+// scheduleFn, when non-nil, provides the current recording window status for the UI.
+func NewServer(port, dir, authPasswd string, forceRecord, recording *atomic.Bool, scheduleFn func() ScheduleStatus) *Server {
 	t, err := template.ParseFS(indexTemplateFS, "static/index.html")
 	if err != nil {
 		panic(fmt.Sprintf("failed to parse index template: %v", err))
 	}
 
 	s := Server{ //nolint:exhaustruct
-		dir:          dir,
-		template:     t,
-		warnCapacity: 80, //nolint:mnd
-		authPasswd:   authPasswd,
-		forceRecord:  forceRecord,
-		recording:    recording,
-		done:         make(chan struct{}),
+		dir:            dir,
+		template:       t,
+		warnCapacity:   80, //nolint:mnd
+		authPasswd:     authPasswd,
+		forceRecord:    forceRecord,
+		recording:      recording,
+		scheduleStatus: scheduleFn,
+		done:           make(chan struct{}),
 	}
 
 	router := routegroup.New(http.NewServeMux())
@@ -184,6 +193,11 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 
+	var schedStatus ScheduleStatus
+	if s.scheduleStatus != nil {
+		schedStatus = s.scheduleStatus()
+	}
+
 	data := struct {
 		Episodes        []episode
 		ShowForceRecord bool
@@ -192,6 +206,8 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 		ActiveFile      string
 		ActiveEpisode   string
 		AuthEnabled     bool
+		InWindow        bool
+		ShowStatus      string
 	}{
 		Episodes:        episodes,
 		ShowForceRecord: s.forceRecord != nil,
@@ -200,6 +216,8 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 		ActiveFile:      activeFile,
 		ActiveEpisode:   activeEpisode,
 		AuthEnabled:     s.authPasswd != "",
+		InWindow:        schedStatus.InWindow,
+		ShowStatus:      schedStatus.ShowStatus,
 	}
 
 	var buf bytes.Buffer

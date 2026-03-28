@@ -43,7 +43,7 @@ func setupTestDir(t *testing.T) string {
 
 func newTestServer(t *testing.T, dir string) *Server {
 	t.Helper()
-	return NewServer("0", dir, "", nil, nil)
+	return NewServer("0", dir, "", nil, nil, nil)
 }
 
 func newRequest(t *testing.T, target string) *http.Request {
@@ -119,7 +119,7 @@ func TestIndexHandler(t *testing.T) {
 	t.Run("shows Start Recording button when forceRecord is set", func(t *testing.T) {
 		dir := setupTestDir(t)
 		var flag atomic.Bool
-		srv := NewServer("0", dir, "", &flag, nil)
+		srv := NewServer("0", dir, "", &flag, nil, nil)
 
 		req := newRequest(t, "/")
 		rec := httptest.NewRecorder()
@@ -134,7 +134,7 @@ func TestIndexHandler(t *testing.T) {
 		var forceFlag atomic.Bool
 		var recFlag atomic.Bool
 		recFlag.Store(true)
-		srv := NewServer("0", dir, "", &forceFlag, &recFlag)
+		srv := NewServer("0", dir, "", &forceFlag, &recFlag, nil)
 
 		req := newRequest(t, "/")
 		rec := httptest.NewRecorder()
@@ -149,7 +149,7 @@ func TestIndexHandler(t *testing.T) {
 		dir := setupTestDir(t)
 		var forceFlag atomic.Bool
 		forceFlag.Store(true)
-		srv := NewServer("0", dir, "", &forceFlag, nil)
+		srv := NewServer("0", dir, "", &forceFlag, nil, nil)
 
 		req := newRequest(t, "/")
 		rec := httptest.NewRecorder()
@@ -165,7 +165,7 @@ func TestIndexHandler(t *testing.T) {
 		var flag atomic.Bool
 		hash, hashErr := bcrypt.GenerateFromPassword([]byte("testpass"), bcrypt.MinCost)
 		require.NoError(t, hashErr)
-		srv := NewServer("0", dir, string(hash), &flag, nil)
+		srv := NewServer("0", dir, string(hash), &flag, nil, nil)
 
 		req := newRequest(t, "/")
 		rec := httptest.NewRecorder()
@@ -181,7 +181,7 @@ func TestIndexHandler(t *testing.T) {
 	t.Run("no password field when auth disabled", func(t *testing.T) {
 		dir := setupTestDir(t)
 		var flag atomic.Bool
-		srv := NewServer("0", dir, "", &flag, nil)
+		srv := NewServer("0", dir, "", &flag, nil, nil)
 
 		req := newRequest(t, "/")
 		rec := httptest.NewRecorder()
@@ -201,6 +201,51 @@ func TestIndexHandler(t *testing.T) {
 		rec := serveHTTP(srv, req)
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("shows schedule badge when in window", func(t *testing.T) {
+		dir := setupTestDir(t)
+		srv := NewServer("0", dir, "", nil, nil, func() ScheduleStatus {
+			return ScheduleStatus{InWindow: true, ShowStatus: "32m to show"}
+		})
+
+		req := newRequest(t, "/")
+		rec := httptest.NewRecorder()
+		srv.IndexHandler(rec, req)
+
+		body := rec.Body.String()
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, body, "LIVE WINDOW")
+		assert.Contains(t, body, "32m to show")
+		assert.Contains(t, body, `content="60"`, "should auto-refresh every 60s when in window")
+	})
+
+	t.Run("hides schedule badge when outside window", func(t *testing.T) {
+		dir := setupTestDir(t)
+		srv := NewServer("0", dir, "", nil, nil, func() ScheduleStatus {
+			return ScheduleStatus{InWindow: false}
+		})
+
+		req := newRequest(t, "/")
+		rec := httptest.NewRecorder()
+		srv.IndexHandler(rec, req)
+
+		body := rec.Body.String()
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.NotContains(t, body, "LIVE WINDOW")
+	})
+
+	t.Run("hides schedule badge when schedule disabled", func(t *testing.T) {
+		dir := setupTestDir(t)
+		srv := NewServer("0", dir, "", nil, nil, nil)
+
+		req := newRequest(t, "/")
+		rec := httptest.NewRecorder()
+		srv.IndexHandler(rec, req)
+
+		body := rec.Body.String()
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.NotContains(t, body, "LIVE WINDOW")
 	})
 }
 
@@ -332,7 +377,7 @@ func TestForceRecordHandler(t *testing.T) {
 	t.Run("POST /record sets force flag and redirects to index", func(t *testing.T) {
 		dir := t.TempDir()
 		var flag atomic.Bool
-		srv := NewServer("0", dir, "", &flag, nil)
+		srv := NewServer("0", dir, "", &flag, nil, nil)
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
 		require.NoError(t, err)
@@ -345,7 +390,7 @@ func TestForceRecordHandler(t *testing.T) {
 
 	t.Run("route not registered when forceRecord is nil", func(t *testing.T) {
 		dir := t.TempDir()
-		srv := NewServer("0", dir, "", nil, nil)
+		srv := NewServer("0", dir, "", nil, nil, nil)
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
 		require.NoError(t, err)
@@ -434,7 +479,7 @@ func TestCheckAuth(t *testing.T) {
 
 	dir := t.TempDir()
 	var flag atomic.Bool
-	srv := NewServer("0", dir, string(hash), &flag, nil)
+	srv := NewServer("0", dir, string(hash), &flag, nil, nil)
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -451,7 +496,7 @@ func TestForceRecordHandler_Auth(t *testing.T) {
 	t.Run("returns 403 without credentials when auth enabled", func(t *testing.T) {
 		dir := t.TempDir()
 		var flag atomic.Bool
-		srv := NewServer("0", dir, string(hash), &flag, nil)
+		srv := NewServer("0", dir, string(hash), &flag, nil, nil)
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
 		require.NoError(t, err)
@@ -464,7 +509,7 @@ func TestForceRecordHandler_Auth(t *testing.T) {
 	t.Run("returns 403 with wrong password when auth enabled", func(t *testing.T) {
 		dir := t.TempDir()
 		var flag atomic.Bool
-		srv := NewServer("0", dir, string(hash), &flag, nil)
+		srv := NewServer("0", dir, string(hash), &flag, nil, nil)
 
 		body := strings.NewReader(url.Values{"password": {"wrong"}}.Encode())
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", body)
@@ -479,7 +524,7 @@ func TestForceRecordHandler_Auth(t *testing.T) {
 	t.Run("redirects with correct password via form body", func(t *testing.T) {
 		dir := t.TempDir()
 		var flag atomic.Bool
-		srv := NewServer("0", dir, string(hash), &flag, nil)
+		srv := NewServer("0", dir, string(hash), &flag, nil, nil)
 
 		body := strings.NewReader(url.Values{"password": {"secret123"}}.Encode())
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", body)
@@ -495,7 +540,7 @@ func TestForceRecordHandler_Auth(t *testing.T) {
 	t.Run("redirects with correct password via basic auth", func(t *testing.T) {
 		dir := t.TempDir()
 		var flag atomic.Bool
-		srv := NewServer("0", dir, string(hash), &flag, nil)
+		srv := NewServer("0", dir, string(hash), &flag, nil, nil)
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
 		require.NoError(t, err)
@@ -510,7 +555,7 @@ func TestForceRecordHandler_Auth(t *testing.T) {
 	t.Run("works without credentials when auth disabled", func(t *testing.T) {
 		dir := t.TempDir()
 		var flag atomic.Bool
-		srv := NewServer("0", dir, "", &flag, nil)
+		srv := NewServer("0", dir, "", &flag, nil, nil)
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/record", http.NoBody)
 		require.NoError(t, err)
@@ -529,7 +574,7 @@ func TestGETEndpoints_WithAuthEnabled(t *testing.T) {
 
 	var forceFlag atomic.Bool
 	var recFlag atomic.Bool
-	srv := NewServer("0", dir, string(hash), &forceFlag, &recFlag)
+	srv := NewServer("0", dir, string(hash), &forceFlag, &recFlag, nil)
 	srv.warnCapacity = 100
 
 	t.Run("index page accessible without credentials", func(t *testing.T) {
@@ -625,7 +670,7 @@ func TestLiveStreamHandler(t *testing.T) {
 		dir := t.TempDir()
 		var recording atomic.Bool
 		recording.Store(true)
-		srv := NewServer("0", dir, "", nil, &recording)
+		srv := NewServer("0", dir, "", nil, &recording, nil)
 
 		req := newRequest(t, "/live/test.mp3")
 		rec := serveHTTP(srv, req)
@@ -637,7 +682,7 @@ func TestLiveStreamHandler(t *testing.T) {
 		dir := setupTestDir(t)
 		var recording atomic.Bool
 		recording.Store(true)
-		srv := NewServer("0", dir, "", nil, &recording)
+		srv := NewServer("0", dir, "", nil, &recording, nil)
 
 		// stop recording after a short delay so tailFile exits
 		go func() {
