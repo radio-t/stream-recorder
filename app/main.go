@@ -217,6 +217,35 @@ func startPurge(ctx context.Context, wg *sync.WaitGroup, cfg purgeConfig) {
 	}()
 }
 
+// hoursInWeek is the number of hours in a week
+const hoursInWeek = 7 * 24
+
+// schedule constants for Radio-T show: Saturday 20:00 UTC, 2h before, 4h after
+// see https://radio-t.com/online/
+const (
+	showDay         = time.Saturday
+	showHour        = 20
+	showBeforeHours = 2
+	showAfterHours  = 4
+)
+
+// inScheduleWindow checks whether now falls within the recording window
+// around the Radio-T show (Saturday 20:00 UTC, recording from 18:00 to 00:00 Sunday).
+func inScheduleWindow(now time.Time) bool {
+	schedHour := int(showDay)*24 + showHour
+	startHour := (schedHour - showBeforeHours + hoursInWeek) % hoursInWeek
+	endHour := (schedHour + showAfterHours) % hoursInWeek
+
+	now = now.UTC()
+	nowHour := int(now.Weekday())*24 + now.Hour()
+
+	if startHour <= endHour {
+		return nowHour >= startHour && nowHour < endHour
+	}
+	// window wraps around the week boundary (Saturday evening to Sunday morning)
+	return nowHour >= startHour || nowHour < endHour
+}
+
 func run(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig) {
 	ticker := time.NewTicker(cfg.tickInterval)
 	defer ticker.Stop()
@@ -237,7 +266,7 @@ func run(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig)
 // returns true when the context is cancelled and the loop should exit.
 func pollAndRecord(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig) bool {
 	forced := cfg.forceRecord != nil && cfg.forceRecord.Load()
-	if !forced && cfg.schedule && !recorder.InScheduleWindow(cfg.nowFn()) {
+	if !forced && cfg.schedule && !inScheduleWindow(cfg.nowFn()) {
 		slog.Debug("outside recording window")
 		return false
 	}

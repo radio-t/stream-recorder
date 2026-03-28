@@ -73,11 +73,11 @@
 - Delete: `app/recorder/schedule.go`
 - Delete: `app/recorder/schedule_test.go`
 
-- [ ] move `InScheduleWindow` from `app/recorder/schedule.go` to `app/main.go` as unexported `inScheduleWindow`
-- [ ] move schedule test cases from `app/recorder/schedule_test.go` to `app/run_test.go`
-- [ ] update the call in `pollAndRecord` from `recorder.InScheduleWindow` to `inScheduleWindow`
-- [ ] delete `app/recorder/schedule.go` and `app/recorder/schedule_test.go`
-- [ ] run tests and linter — must pass
+- [x] move `InScheduleWindow` from `app/recorder/schedule.go` to `app/main.go` as unexported `inScheduleWindow`
+- [x] move schedule test cases from `app/recorder/schedule_test.go` to `app/run_test.go`
+- [x] update the call in `pollAndRecord` from `recorder.InScheduleWindow` to `inScheduleWindow`
+- [x] delete `app/recorder/schedule.go` and `app/recorder/schedule_test.go`
+- [x] run tests and linter — must pass
 
 ### Task 3: Make filename format explicit
 
