@@ -20,7 +20,7 @@ func TestRecorder(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	ctx := context.Background()
-	r := recorder.NewRecorder(dir)
+	r := recorder.NewRecorder(dir, nil)
 
 	reader := strings.NewReader("some audio data")
 	s := recorder.NewStream("rt testrecord", io.NopCloser(reader))
@@ -102,7 +102,7 @@ func (r *slowReader) send(data []byte) {
 func TestRecorderContextCancellation(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	r := recorder.NewRecorder(dir)
+	r := recorder.NewRecorder(dir, nil)
 
 	sr := newSlowReader()
 	s := recorder.NewStream("rt 999", sr)
@@ -199,7 +199,7 @@ func TestRecordingFileName_ConsistentWithPrefix(t *testing.T) {
 func TestRecorderContextAlreadyCancelled(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	r := recorder.NewRecorder(dir)
+	r := recorder.NewRecorder(dir, nil)
 
 	sr := newSlowReader()
 	s := recorder.NewStream("rt 888", sr)

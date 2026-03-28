@@ -113,11 +113,11 @@
 - Modify: `app/recorder/recorder_test.go` (update test setup)
 - Modify: `app/main_test.go` (update if needed)
 
-- [ ] change `NewRecorder(dir string)` to `NewRecorder(dir string, onReady func())` — pass `nil` when not needed
-- [ ] make `OnReady` unexported field `onReady`
-- [ ] update `main.go` call site
-- [ ] update tests
-- [ ] run tests and linter — must pass
+- [x] change `NewRecorder(dir string)` to `NewRecorder(dir string, onReady func())` — pass `nil` when not needed
+- [x] make `OnReady` unexported field `onReady`
+- [x] update `main.go` call site
+- [x] update tests
+- [x] run tests and linter — must pass
 
 ### Task 6: Fix naming
 

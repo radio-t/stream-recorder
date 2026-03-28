@@ -73,8 +73,7 @@ func main() {
 	var forceRecord, recording atomic.Bool
 
 	client := recorder.NewClient(http.DefaultClient, opts.Stream, opts.Site)
-	rec := recorder.NewRecorder(opts.Dir)
-	rec.OnReady = func() { recording.Store(true) }
+	rec := recorder.NewRecorder(opts.Dir, func() { recording.Store(true) })
 	listener := recorder.NewListener(client)
 
 	wg := sync.WaitGroup{}

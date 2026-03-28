@@ -104,7 +104,7 @@ func TestFullPipeline(t *testing.T) {
 	stream, err := listener.Listen(recordCtx)
 	require.NoError(t, err)
 
-	rec := recorder.NewRecorder(recordsPath)
+	rec := recorder.NewRecorder(recordsPath, nil)
 	_, err = rec.Record(recordCtx, stream)
 	require.ErrorIs(t, err, context.DeadlineExceeded, "recording should stop when context times out")
 
@@ -211,7 +211,7 @@ func TestRecordingCancellation(t *testing.T) {
 	stream, err := listener.Listen(recordCtx)
 	require.NoError(t, err)
 
-	rec := recorder.NewRecorder(recordsPath)
+	rec := recorder.NewRecorder(recordsPath, nil)
 
 	// cancel recording after 500ms
 	go func() {

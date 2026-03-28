@@ -18,13 +18,15 @@ const buffer = 32 * 1024 // 32KB read buffer
 // inside a per-episode subdirectory.
 type Recorder struct {
 	dir     string
-	OnReady func() // called after the output file is created, before streaming begins
+	onReady func() // called after the output file is created, before streaming begins
 }
 
-// NewRecorder creates a new recorder
-func NewRecorder(dir string) *Recorder {
-	return &Recorder{ //nolint:exhaustruct // OnReady is optional
-		dir: dir,
+// NewRecorder creates a new recorder. onReady, when non-nil, is called after the
+// output file is created but before streaming begins.
+func NewRecorder(dir string, onReady func()) *Recorder {
+	return &Recorder{
+		dir:     dir,
+		onReady: onReady,
 	}
 }
 
@@ -74,8 +76,8 @@ func (r *Recorder) Record(ctx context.Context, s *Stream) (string, error) { //no
 	}
 	defer f.Close() //nolint: errcheck
 
-	if r.OnReady != nil {
-		r.OnReady()
+	if r.onReady != nil {
+		r.onReady()
 	}
 
 	// if context was cancelled between the check above and file creation, clean up the empty file
