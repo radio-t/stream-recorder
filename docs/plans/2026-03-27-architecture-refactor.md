@@ -53,17 +53,17 @@
 - Modify: `app/run_test.go` (update imports)
 - Modify: `app/main_test.go` (update imports if referencing chapter types)
 
-- [ ] create `app/chapters/` package
-- [ ] move `news.go` + `news_test.go` to `app/chapters/`, change package declaration
-- [ ] move `chapters.go` + `chapters_test.go` to `app/chapters/`, update `//go:generate` directive, then run `go generate ./app/chapters/...` to regenerate the moq mock in the correct package
-- [ ] move `Chapter` type to `app/chapters/` (it currently lives in `chapters.go`)
-- [ ] extract `InjectChapters`, `writeChapteredFile`, `buildChapterFrames` from `id3.go` into `app/chapters/inject.go`
-- [ ] move ID3 chapter frame builders (`id3ChapFrame`, `id3CTOCFrame`, `id3WXXXFrame`, `buildChapterFrames`) and helpers (`readSyncsafe`, `putSyncsafe`, `id3TextFrame`) into `app/chapters/inject.go` alongside `InjectChapters` — keep only `WriteID3v2Header` in `recorder/id3.go` with its own copy of `putSyncsafe` and `id3TextFrame` (small, avoids cross-package dependency)
-- [ ] move chapter-related tests from `id3_test.go` (`TestID3ChapFrame`, `TestID3ChapFrameNoLink`, `TestID3CTOCFrame`, `TestReadSyncsafe`, `TestReadPutSyncsafeRoundtrip`) to `app/chapters/inject_test.go`
-- [ ] rewrite `InjectChapters` integration tests from `recorder_test.go` (`TestRecordAndInjectChapters`, `TestInjectChaptersEmpty`, `TestInjectChaptersNonexistentFile`, `TestInjectChaptersNonID3File`) in `app/chapters/inject_test.go` — create test MP3 files directly (write ID3 header + audio bytes) instead of depending on `recorder.Record`
-- [ ] update `main.go` and `run_test.go` imports: `recorder.Chapter` → `chapters.Chapter`, `recorder.InjectChapters` → `chapters.InjectChapters`, `recorder.NewChapterTracker` → `chapters.NewChapterTracker`, `recorder.NewNewsClient` → `chapters.NewNewsClient`
-- [ ] delete original files from `app/recorder/`
-- [ ] run `go test -race -short ./...` and `golangci-lint run` — must pass
+- [x] create `app/chapters/` package
+- [x] move `news.go` + `news_test.go` to `app/chapters/`, change package declaration
+- [x] move `chapters.go` + `chapters_test.go` to `app/chapters/`, update `//go:generate` directive, then run `go generate ./app/chapters/...` to regenerate the moq mock in the correct package
+- [x] move `Chapter` type to `app/chapters/` (it currently lives in `chapters.go`)
+- [x] extract `InjectChapters`, `writeChapteredFile`, `buildChapterFrames` from `id3.go` into `app/chapters/inject.go`
+- [x] move ID3 chapter frame builders (`id3ChapFrame`, `id3CTOCFrame`, `id3WXXXFrame`, `buildChapterFrames`) and helpers (`readSyncsafe`, `putSyncsafe`, `id3TextFrame`) into `app/chapters/inject.go` alongside `InjectChapters` — keep only `WriteID3v2Header` in `recorder/id3.go` with its own copy of `putSyncsafe` and `id3TextFrame` (small, avoids cross-package dependency)
+- [x] move chapter-related tests from `id3_test.go` (`TestID3ChapFrame`, `TestID3ChapFrameNoLink`, `TestID3CTOCFrame`, `TestReadSyncsafe`, `TestReadPutSyncsafeRoundtrip`) to `app/chapters/inject_test.go`
+- [x] rewrite `InjectChapters` integration tests from `recorder_test.go` (`TestRecordAndInjectChapters`, `TestInjectChaptersEmpty`, `TestInjectChaptersNonexistentFile`, `TestInjectChaptersNonID3File`) in `app/chapters/inject_test.go` — create test MP3 files directly (write ID3 header + audio bytes) instead of depending on `recorder.Record`
+- [x] update `main.go` and `run_test.go` imports: `recorder.Chapter` → `chapters.Chapter`, `recorder.InjectChapters` → `chapters.InjectChapters`, `recorder.NewChapterTracker` → `chapters.NewChapterTracker`, `recorder.NewNewsClient` → `chapters.NewNewsClient`
+- [x] delete original files from `app/recorder/`
+- [x] run `go test -race -short ./...` and `golangci-lint run` — must pass
 
 ### Task 2: Move schedule to main
 

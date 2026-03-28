@@ -16,6 +16,7 @@ import (
 	"github.com/jessevdk/go-flags"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/radio-t/stream-recorder/app/chapters"
 	"github.com/radio-t/stream-recorder/app/recorder"
 	"github.com/radio-t/stream-recorder/app/server"
 )
@@ -109,7 +110,7 @@ type streamRecorder interface {
 // chapterProvider tracks chapter changes during recording.
 type chapterProvider interface {
 	Run(ctx context.Context)
-	Chapters() []recorder.Chapter
+	Chapters() []chapters.Chapter
 }
 
 // runConfig holds configuration for the recording loop.
@@ -120,7 +121,7 @@ type runConfig struct {
 	forceRecord       *atomic.Bool
 	recording         *atomic.Bool
 	newChapterTracker func() chapterProvider                 // nil = chapter tracking disabled
-	injectChapters    func(string, []recorder.Chapter) error // defaults to recorder.InjectChapters
+	injectChapters    func(string, []chapters.Chapter) error // defaults to chapters.InjectChapters
 }
 
 // newRunConfig creates a runConfig with standard defaults, optionally enabling chapter tracking.
@@ -135,8 +136,8 @@ func newRunConfig(schedule bool, forceRecord, recording *atomic.Bool, newsAPI st
 	if newsAPI != "" {
 		slog.Info("Chapter tracking enabled", slog.String("news_api", newsAPI))
 		cfg.newChapterTracker = func() chapterProvider {
-			nc := recorder.NewNewsClient(http.DefaultClient, newsAPI)
-			return recorder.NewChapterTracker(nc, time.Now)
+			nc := chapters.NewNewsClient(http.DefaultClient, newsAPI)
+			return chapters.NewChapterTracker(nc, time.Now)
 		}
 	}
 	return cfg
@@ -307,20 +308,20 @@ func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream
 
 // maybeInjectChapters injects collected chapter markers into the recorded file.
 // does nothing when tracker is nil or no chapters were collected.
-func maybeInjectChapters(tracker chapterProvider, filePath string, inject func(string, []recorder.Chapter) error) {
+func maybeInjectChapters(tracker chapterProvider, filePath string, inject func(string, []chapters.Chapter) error) {
 	if tracker == nil {
 		return
 	}
-	chapters := tracker.Chapters()
-	if len(chapters) == 0 {
+	chaps := tracker.Chapters()
+	if len(chaps) == 0 {
 		return
 	}
 	if inject == nil {
-		inject = recorder.InjectChapters
+		inject = chapters.InjectChapters
 	}
-	if err := inject(filePath, chapters); err != nil {
+	if err := inject(filePath, chaps); err != nil {
 		slog.Error("failed to inject chapters", slog.String("err", err.Error()))
 	} else {
-		slog.Info("injected chapter markers", slog.Int("count", len(chapters)))
+		slog.Info("injected chapter markers", slog.Int("count", len(chaps)))
 	}
 }

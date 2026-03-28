@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radio-t/stream-recorder/app/chapters"
 	"github.com/radio-t/stream-recorder/app/recorder"
 )
 
@@ -240,7 +241,7 @@ const testRecordedPath = "/tmp/test.mp3"
 // mockChapterProvider implements chapterProvider for testing.
 type mockChapterProvider struct {
 	runCalled chan struct{} // closed when Run starts
-	chapters  []recorder.Chapter
+	chapters  []chapters.Chapter
 }
 
 func (m *mockChapterProvider) Run(ctx context.Context) {
@@ -248,23 +249,23 @@ func (m *mockChapterProvider) Run(ctx context.Context) {
 	<-ctx.Done()
 }
 
-func (m *mockChapterProvider) Chapters() []recorder.Chapter {
+func (m *mockChapterProvider) Chapters() []chapters.Chapter {
 	return m.chapters
 }
 
 func TestPollAndRecord_WithChapterTracking(t *testing.T) {
-	chapters := []recorder.Chapter{
+	chaps := []chapters.Chapter{
 		{Title: "Topic 1", Link: "https://example.com/1", Offset: 0},
 		{Title: "Topic 2", Link: "https://example.com/2", Offset: 5 * time.Minute},
 	}
 
 	tracker := &mockChapterProvider{
 		runCalled: make(chan struct{}),
-		chapters:  chapters,
+		chapters:  chaps,
 	}
 
 	var injectedPath string
-	var injectedChapters []recorder.Chapter
+	var injectedChaps []chapters.Chapter
 
 	ml := &mockStreamListener{
 		listenFn: func(_ context.Context) (*recorder.Stream, error) {
@@ -284,9 +285,9 @@ func TestPollAndRecord_WithChapterTracking(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectChapters: func(path string, chs []recorder.Chapter) error {
+		injectChapters: func(path string, chs []chapters.Chapter) error {
 			injectedPath = path
-			injectedChapters = chs
+			injectedChaps = chs
 			return nil
 		},
 	}
@@ -296,7 +297,7 @@ func TestPollAndRecord_WithChapterTracking(t *testing.T) {
 
 	assert.False(t, done)
 	assert.Equal(t, testRecordedPath, injectedPath, "chapters should be injected into recorded file")
-	assert.Equal(t, chapters, injectedChapters, "all collected chapters should be passed to injection")
+	assert.Equal(t, chaps, injectedChaps, "all collected chapters should be passed to injection")
 }
 
 func TestPollAndRecord_ChapterTrackingDisabled(t *testing.T) {
@@ -352,7 +353,7 @@ func TestPollAndRecord_NoChaptersCollected(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectChapters: func(_ string, _ []recorder.Chapter) error {
+		injectChapters: func(_ string, _ []chapters.Chapter) error {
 			injectionCalled = true
 			return nil
 		},
@@ -367,7 +368,7 @@ func TestPollAndRecord_NoChaptersCollected(t *testing.T) {
 func TestPollAndRecord_ChapterTrackingRecordingFails(t *testing.T) {
 	tracker := &mockChapterProvider{
 		runCalled: make(chan struct{}),
-		chapters:  []recorder.Chapter{{Title: "Topic", Offset: 0}},
+		chapters:  []chapters.Chapter{{Title: "Topic", Offset: 0}},
 	}
 
 	var injectionCalled bool
@@ -390,7 +391,7 @@ func TestPollAndRecord_ChapterTrackingRecordingFails(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectChapters: func(_ string, _ []recorder.Chapter) error {
+		injectChapters: func(_ string, _ []chapters.Chapter) error {
 			injectionCalled = true
 			return nil
 		},
@@ -406,7 +407,7 @@ func TestPollAndRecord_ChapterTrackingRecordingFails(t *testing.T) {
 func TestPollAndRecord_ChapterInjectionError(t *testing.T) {
 	tracker := &mockChapterProvider{
 		runCalled: make(chan struct{}),
-		chapters:  []recorder.Chapter{{Title: "Topic", Offset: 0}},
+		chapters:  []chapters.Chapter{{Title: "Topic", Offset: 0}},
 	}
 
 	ml := &mockStreamListener{
@@ -427,7 +428,7 @@ func TestPollAndRecord_ChapterInjectionError(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectChapters: func(_ string, _ []recorder.Chapter) error {
+		injectChapters: func(_ string, _ []chapters.Chapter) error {
 			return fmt.Errorf("injection failed")
 		},
 	}
@@ -441,18 +442,18 @@ func TestPollAndRecord_ChapterInjectionError(t *testing.T) {
 
 func TestPollAndRecord_ChapterInjectionOnContextCancel(t *testing.T) {
 	// verify chapters are injected when recording is stopped by context cancellation (SIGINT)
-	chapters := []recorder.Chapter{
+	chaps := []chapters.Chapter{
 		{Title: "Topic 1", Link: "https://example.com/1", Offset: 0},
 		{Title: "Topic 2", Link: "https://example.com/2", Offset: 5 * time.Minute},
 	}
 
 	tracker := &mockChapterProvider{
 		runCalled: make(chan struct{}),
-		chapters:  chapters,
+		chapters:  chaps,
 	}
 
 	var injectedPath string
-	var injectedChapters []recorder.Chapter
+	var injectedChaps []chapters.Chapter
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -475,9 +476,9 @@ func TestPollAndRecord_ChapterInjectionOnContextCancel(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectChapters: func(path string, chs []recorder.Chapter) error {
+		injectChapters: func(path string, chs []chapters.Chapter) error {
 			injectedPath = path
-			injectedChapters = chs
+			injectedChaps = chs
 			return nil
 		},
 	}
@@ -486,7 +487,7 @@ func TestPollAndRecord_ChapterInjectionOnContextCancel(t *testing.T) {
 
 	assert.True(t, done, "should signal clean shutdown")
 	assert.Equal(t, testRecordedPath, injectedPath, "chapters should be injected even on context cancellation")
-	assert.Equal(t, chapters, injectedChapters, "all collected chapters should be passed to injection")
+	assert.Equal(t, chaps, injectedChaps, "all collected chapters should be passed to injection")
 }
 
 func TestRun_ChapterTrackingPerRecording(t *testing.T) {
@@ -516,7 +517,7 @@ func TestRun_ChapterTrackingPerRecording(t *testing.T) {
 				chapters:  nil,
 			}
 		},
-		injectChapters: func(_ string, _ []recorder.Chapter) error {
+		injectChapters: func(_ string, _ []chapters.Chapter) error {
 			return nil
 		},
 	}

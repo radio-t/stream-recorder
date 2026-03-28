@@ -1,4 +1,4 @@
-package recorder
+package chapters
 
 import (
 	"context"
@@ -10,6 +10,13 @@ import (
 	"strings"
 	"time"
 )
+
+// HTTPClient interface to make HTTP requests
+//
+//go:generate moq -out httpclient_moq_test.go . HTTPClient
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
 
 // Article represents a news article from the Radio-T news API.
 type Article struct {
