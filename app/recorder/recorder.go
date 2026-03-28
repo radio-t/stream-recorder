@@ -7,7 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -41,14 +41,14 @@ func RecordingFilePrefix(episode string) string {
 }
 
 func (r *Recorder) prepareFile(episode string) (*os.File, error) {
-	fileDir := path.Join(r.dir, episode)
+	fileDir := filepath.Join(r.dir, episode)
 
 	if err := os.MkdirAll(fileDir, 0o750); err != nil {
 		return nil, fmt.Errorf("failed to create %s directory: %w", fileDir, err)
 	}
 
 	fileName := RecordingFileName(episode, time.Now())
-	filePath := path.Join(fileDir, fileName)
+	filePath := filepath.Join(fileDir, fileName)
 
 	f, err := os.Create(filePath) //nolint: gosec
 	if err != nil {
@@ -82,8 +82,8 @@ func (r *Recorder) Record(ctx context.Context, s *Stream) (string, error) { //no
 
 	// if context was cancelled between the check above and file creation, clean up the empty file
 	if ctx.Err() != nil {
-		os.Remove(f.Name())           //nolint: errcheck,gosec // best-effort cleanup
-		os.Remove(path.Dir(f.Name())) //nolint: errcheck,gosec // removes dir only if empty
+		os.Remove(f.Name())               //nolint: errcheck,gosec // best-effort cleanup
+		os.Remove(filepath.Dir(f.Name())) //nolint: errcheck,gosec // removes dir only if empty
 		return "", ctx.Err()
 	}
 

@@ -9,7 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -115,7 +115,7 @@ func TestFullPipeline(t *testing.T) {
 	assert.Equal(t, "999", episodeDirs[0].Name(), "episode directory should be named after episode number")
 
 	// verify recording file created with correct naming pattern
-	episodePath := path.Join(recordsPath, "999")
+	episodePath := filepath.Join(recordsPath, "999")
 	files, err := os.ReadDir(episodePath)
 	require.NoError(t, err)
 	require.Len(t, files, 1)
@@ -125,7 +125,7 @@ func TestFullPipeline(t *testing.T) {
 	assert.True(t, strings.HasSuffix(fileName, ".mp3"), "file should have .mp3 extension")
 
 	// verify file size is within reasonable range (2s at 128kbps ~ 32KB, expect at least 10KB)
-	filePath := path.Join(episodePath, fileName)
+	filePath := filepath.Join(episodePath, fileName)
 	fi, err := os.Stat(filePath)
 	require.NoError(t, err)
 	assert.Greater(t, fi.Size(), int64(10*1024), "recorded file should be at least 10KB for 2s of 128kbps audio")
@@ -231,7 +231,7 @@ func TestRecordingCancellation(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, episodeDirs, 1)
 
-	episodePath := path.Join(recordsPath, "999")
+	episodePath := filepath.Join(recordsPath, "999")
 	files, err := os.ReadDir(episodePath)
 	require.NoError(t, err)
 	require.Len(t, files, 1, "partial recording file should exist")

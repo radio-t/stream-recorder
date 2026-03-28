@@ -153,19 +153,19 @@
 - Modify: `app/server/server.go` (`path.Join` → `filepath.Join`)
 - Modify: `app/main_test.go` (`path.Join` → `filepath.Join`)
 
-- [ ] replace `path.Join` and `path.Dir` with `filepath.Join` and `filepath.Dir` in `recorder.go`
-- [ ] replace `path.Join` with `filepath.Join` in `server.go` (all file path uses)
-- [ ] replace `path.Join` with `filepath.Join` in `main_test.go` (3 instances)
-- [ ] remove `"path"` import where no longer needed, keep `"path/filepath"`
-- [ ] run tests and linter — must pass
+- [x] replace `path.Join` and `path.Dir` with `filepath.Join` and `filepath.Dir` in `recorder.go`
+- [x] replace `path.Join` with `filepath.Join` in `server.go` (all file path uses)
+- [x] replace `path.Join` with `filepath.Join` in `main_test.go` (3 instances)
+- [x] remove `"path"` import where no longer needed, keep `"path/filepath"`
+- [x] run tests and linter — must pass
 
 ### Task 9: Verify acceptance criteria
 
-- [ ] verify all packages have clear single responsibilities
-- [ ] verify no circular imports
-- [ ] run full test suite: `go test -race -short ./...`
-- [ ] run linter: `golangci-lint run`
-- [ ] verify test coverage hasn't decreased: `go test -race -coverprofile=/tmp/coverage.out -short ./... && go tool cover -func=/tmp/coverage.out | tail -1`
+- [x] verify all packages have clear single responsibilities
+- [x] verify no circular imports
+- [x] run full test suite: `go test -race -short ./...`
+- [x] run linter: `golangci-lint run`
+- [x] verify test coverage hasn't decreased: `go test -race -coverprofile=/tmp/coverage.out -short ./... && go tool cover -func=/tmp/coverage.out | tail -1`
 
 ### Task 10: [Final] Update documentation
 

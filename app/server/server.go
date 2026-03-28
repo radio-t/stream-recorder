@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -135,7 +134,7 @@ func listEpisodes(dir string) ([]episode, error) { //nolint:gocyclo // flat stru
 		if !d.IsDir() {
 			continue
 		}
-		files, err := os.ReadDir(path.Join(dir, d.Name()))
+		files, err := os.ReadDir(filepath.Join(dir, d.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("reading episode dir: %w", err)
 		}
@@ -312,7 +311,7 @@ func (s *Server) DownloadFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath := path.Join(s.dir, folder, file)
+	filePath := filepath.Join(s.dir, folder, file)
 	fi, err := os.Stat(filePath) //nolint:gosec,nolintlint // path components validated above
 	if err != nil || fi.IsDir() {
 		http.NotFound(w, r)
@@ -374,7 +373,7 @@ func (s *Server) activeFileInfo() (episodeName, filePath string) {
 	if len(last.Files) == 0 {
 		return "", ""
 	}
-	return last.Name, path.Join(s.dir, last.Name, last.Files[len(last.Files)-1])
+	return last.Name, filepath.Join(s.dir, last.Name, last.Files[len(last.Files)-1])
 }
 
 // tailFile reads from f and writes to w, waiting for more data when EOF is reached
@@ -416,7 +415,7 @@ func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	dirPath := path.Join(s.dir, folder)
+	dirPath := filepath.Join(s.dir, folder)
 	fi, err := os.Stat(dirPath) //nolint:gosec,nolintlint // folder validated above: no ".." or "/"
 	if err != nil {
 		http.NotFound(w, r)
@@ -442,7 +441,7 @@ func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) 
 		if entry.IsDir() || strings.HasSuffix(entry.Name(), ".tmp") {
 			continue // skip transient temp files (e.g. chapter injection)
 		}
-		fp := path.Join(dirPath, entry.Name())
+		fp := filepath.Join(dirPath, entry.Name())
 		src, openErr := os.Open(fp) //nolint:gosec // folder validated above
 		if openErr != nil {
 			continue
