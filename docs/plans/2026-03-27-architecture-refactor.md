@@ -85,12 +85,12 @@
 - Modify: `app/recorder/recorder.go` (extract filename builder)
 - Modify: `app/recorder/purge.go` (use shared function)
 
-- [ ] add exported `RecordingFileName(episode string, t time.Time) string` function in `recorder.go`
-- [ ] add exported `RecordingFilePrefix(episode string) string` function in `recorder.go`
-- [ ] refactor `prepareFile` to use `RecordingFileName`
-- [ ] refactor `isRecorderFile` in `purge.go` to use `RecordingFilePrefix`
-- [ ] write unit tests for `RecordingFileName` and `RecordingFilePrefix`
-- [ ] run tests and linter — must pass
+- [x] add exported `RecordingFileName(episode string, t time.Time) string` function in `recorder.go`
+- [x] add exported `RecordingFilePrefix(episode string) string` function in `recorder.go`
+- [x] refactor `prepareFile` to use `RecordingFileName`
+- [x] refactor `isRecorderFile` in `purge.go` to use `RecordingFilePrefix`
+- [x] write unit tests for `RecordingFileName` and `RecordingFilePrefix`
+- [x] run tests and linter — must pass
 
 ### Task 4: Split runConfig into config and state
 

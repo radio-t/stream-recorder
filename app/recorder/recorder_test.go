@@ -138,6 +138,64 @@ func TestRecorderContextCancellation(t *testing.T) {
 	}
 }
 
+func TestRecordingFileName(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		episode string
+		ts      time.Time
+		want    string
+	}{
+		{
+			name:    "standard episode number",
+			episode: "999",
+			ts:      time.Date(2026, 3, 25, 14, 30, 45, 0, time.UTC),
+			want:    "rt999_2026_03_25_14_30_45.mp3",
+		},
+		{
+			name:    "different episode",
+			episode: "100",
+			ts:      time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC),
+			want:    "rt100_2025_01_02_03_04_05.mp3",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, recorder.RecordingFileName(tt.episode, tt.ts))
+		})
+	}
+}
+
+func TestRecordingFilePrefix(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		episode string
+		want    string
+	}{
+		{name: "numeric episode", episode: "999", want: "rt999_"},
+		{name: "another episode", episode: "100", want: "rt100_"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, recorder.RecordingFilePrefix(tt.episode))
+		})
+	}
+}
+
+func TestRecordingFileName_ConsistentWithPrefix(t *testing.T) {
+	t.Parallel()
+	episode := "777"
+	ts := time.Date(2026, 6, 15, 10, 20, 30, 0, time.UTC)
+	fileName := recorder.RecordingFileName(episode, ts)
+	prefix := recorder.RecordingFilePrefix(episode)
+	assert.True(t, strings.HasPrefix(fileName, prefix),
+		"RecordingFileName %q should start with RecordingFilePrefix %q", fileName, prefix)
+	assert.True(t, strings.HasSuffix(fileName, ".mp3"))
+}
+
 func TestRecorderContextAlreadyCancelled(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

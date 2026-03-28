@@ -28,6 +28,16 @@ func NewRecorder(dir string) *Recorder {
 	}
 }
 
+// RecordingFileName returns the full filename for a recording of the given episode at time t.
+func RecordingFileName(episode string, t time.Time) string {
+	return RecordingFilePrefix(episode) + t.Format("2006_01_02_15_04_05") + ".mp3"
+}
+
+// RecordingFilePrefix returns the filename prefix shared by all recordings of the given episode.
+func RecordingFilePrefix(episode string) string {
+	return "rt" + episode + "_"
+}
+
 func (r *Recorder) prepareFile(episode string) (*os.File, error) {
 	fileDir := path.Join(r.dir, episode)
 
@@ -35,7 +45,7 @@ func (r *Recorder) prepareFile(episode string) (*os.File, error) {
 		return nil, fmt.Errorf("failed to create %s directory: %w", fileDir, err)
 	}
 
-	fileName := "rt" + episode + "_" + time.Now().Format("2006_01_02_15_04_05") + ".mp3"
+	fileName := RecordingFileName(episode, time.Now())
 	filePath := path.Join(fileDir, fileName)
 
 	f, err := os.Create(filePath) //nolint: gosec
