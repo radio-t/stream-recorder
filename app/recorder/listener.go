@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-// ClientService interface represents required methods that client should implement
+// StreamSource interface represents required methods that client should implement
 //
-//go:generate moq -out clientservice_moq_test.go . ClientService
-type ClientService interface {
+//go:generate moq -out streamsource_moq_test.go . StreamSource
+type StreamSource interface {
 	FetchLatest(ctx context.Context) (string, error)
 	FetchStream(ctx context.Context) (io.ReadCloser, error)
 }
@@ -18,11 +18,11 @@ type ClientService interface {
 // Listener polls the SiteAPI for the current episode title, then opens the audio
 // stream and returns both as a Stream ready for recording.
 type Listener struct {
-	client ClientService
+	client StreamSource
 }
 
 // NewListener creates new listener
-func NewListener(c ClientService) *Listener {
+func NewListener(c StreamSource) *Listener {
 	return &Listener{
 		client: c,
 	}

@@ -1,4 +1,5 @@
-package recorder
+// Package chapters provides chapter tracking for recorded streams using the Radio-T news API.
+package chapters
 
 import (
 	"context"

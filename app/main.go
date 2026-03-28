@@ -16,6 +16,7 @@ import (
 	"github.com/jessevdk/go-flags"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/radio-t/stream-recorder/app/chapters"
 	"github.com/radio-t/stream-recorder/app/recorder"
 	"github.com/radio-t/stream-recorder/app/server"
 )
@@ -72,8 +73,7 @@ func main() {
 	var forceRecord, recording atomic.Bool
 
 	client := recorder.NewClient(http.DefaultClient, opts.Stream, opts.Site)
-	rec := recorder.NewRecorder(opts.Dir)
-	rec.OnReady = func() { recording.Store(true) }
+	rec := recorder.NewRecorder(opts.Dir, func() { recording.Store(true) })
 	listener := recorder.NewListener(client)
 
 	wg := sync.WaitGroup{}
@@ -85,12 +85,13 @@ func main() {
 		nowFn:         time.Now,
 	})
 
-	cfg := newRunConfig(opts.Schedule, &forceRecord, &recording, opts.NewsAPI)
+	cfg := newRunConfig(opts.Schedule, opts.NewsAPI)
+	state := &recordingState{forceRecord: &forceRecord, recording: &recording}
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		run(ctx, listener, rec, cfg)
+		run(ctx, listener, rec, cfg, state)
 	}()
 
 	wg.Wait()
@@ -109,35 +110,38 @@ type streamRecorder interface {
 // chapterProvider tracks chapter changes during recording.
 type chapterProvider interface {
 	Run(ctx context.Context)
-	Chapters() []recorder.Chapter
+	Chapters() []chapters.Chapter
 }
 
-// runConfig holds configuration for the recording loop.
+// runConfig holds immutable configuration for the recording loop.
 type runConfig struct {
 	schedule          bool // enable time-based recording window
 	tickInterval      time.Duration
 	nowFn             func() time.Time
-	forceRecord       *atomic.Bool
-	recording         *atomic.Bool
 	newChapterTracker func() chapterProvider                 // nil = chapter tracking disabled
-	injectChapters    func(string, []recorder.Chapter) error // defaults to recorder.InjectChapters
+	injectChapters    func(string, []chapters.Chapter) error // defaults to chapters.InjectChapters
+}
+
+// recordingState holds mutable runtime state for the recording loop.
+type recordingState struct {
+	forceRecord *atomic.Bool
+	recording   *atomic.Bool
 }
 
 // newRunConfig creates a runConfig with standard defaults, optionally enabling chapter tracking.
-func newRunConfig(schedule bool, forceRecord, recording *atomic.Bool, newsAPI string) runConfig {
+func newRunConfig(schedule bool, newsAPI string) runConfig {
 	cfg := runConfig{ //nolint:exhaustruct // newChapterTracker and injectChapters set conditionally below
 		schedule:     schedule,
 		tickInterval: 5 * time.Second, //nolint:mnd
 		nowFn:        time.Now,
-		forceRecord:  forceRecord,
-		recording:    recording,
 	}
 	if newsAPI != "" {
 		slog.Info("Chapter tracking enabled", slog.String("news_api", newsAPI))
 		cfg.newChapterTracker = func() chapterProvider {
-			nc := recorder.NewNewsClient(http.DefaultClient, newsAPI)
-			return recorder.NewChapterTracker(nc, time.Now)
+			nc := chapters.NewNewsClient(http.DefaultClient, newsAPI)
+			return chapters.NewChapterTracker(nc, time.Now)
 		}
+		cfg.injectChapters = chapters.InjectChapters
 	}
 	return cfg
 }
@@ -216,7 +220,44 @@ func startPurge(ctx context.Context, wg *sync.WaitGroup, cfg purgeConfig) {
 	}()
 }
 
-func run(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig) {
+// hoursInWeek is the number of hours in a week
+const hoursInWeek = 7 * 24
+
+// schedule constants for Radio-T show: Saturday 20:00 UTC, 2h before, 4h after
+// see https://radio-t.com/online/
+const (
+	showDay         = time.Saturday
+	showHour        = 20
+	showBeforeHours = 2
+	showAfterHours  = 4
+)
+
+// inScheduleWindow checks whether now falls within the recording window
+// around the Radio-T show (Saturday 20:00 UTC, recording from 18:00 to 00:00 Sunday).
+func inScheduleWindow(now time.Time) bool {
+	schedHour := int(showDay)*24 + showHour
+	startHour := (schedHour - showBeforeHours + hoursInWeek) % hoursInWeek
+	endHour := (schedHour + showAfterHours) % hoursInWeek
+
+	now = now.UTC()
+	nowHour := int(now.Weekday())*24 + now.Hour()
+
+	if startHour <= endHour {
+		return nowHour >= startHour && nowHour < endHour
+	}
+	// window wraps around the week boundary (Saturday evening to Sunday morning)
+	return nowHour >= startHour || nowHour < endHour
+}
+
+// loopAction indicates whether the recording loop should continue or stop.
+type loopAction bool
+
+const (
+	continueLoop loopAction = false
+	stopLoop     loopAction = true
+)
+
+func run(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig, state *recordingState) {
 	ticker := time.NewTicker(cfg.tickInterval)
 	defer ticker.Stop()
 	for {
@@ -225,7 +266,7 @@ func run(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig)
 			slog.Info("Shutting down")
 			return
 		case <-ticker.C:
-			if done := pollAndRecord(ctx, l, r, cfg); done {
+			if pollAndRecord(ctx, l, r, cfg, state) == stopLoop {
 				return
 			}
 		}
@@ -233,34 +274,34 @@ func run(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig)
 }
 
 // pollAndRecord checks the schedule, listens for a stream and records it.
-// returns true when the context is cancelled and the loop should exit.
-func pollAndRecord(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig) bool {
-	forced := cfg.forceRecord != nil && cfg.forceRecord.Load()
-	if !forced && cfg.schedule && !recorder.InScheduleWindow(cfg.nowFn()) {
+// returns stopLoop when the context is cancelled and the loop should exit.
+func pollAndRecord(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig, state *recordingState) loopAction {
+	forced := state.forceRecord != nil && state.forceRecord.Load()
+	if !forced && cfg.schedule && !inScheduleWindow(cfg.nowFn()) {
 		slog.Debug("outside recording window")
-		return false
+		return continueLoop
 	}
 
 	stream, err := l.Listen(ctx)
 	switch {
 	case errors.Is(err, recorder.ErrNotFound):
 		slog.Debug("stream is not available")
-		return false
+		return continueLoop
 	case err != nil:
 		slog.Error("error while listening", slog.String("err", err.Error()))
 	default:
-		return recordStream(ctx, r, stream, cfg, forced)
+		return recordStream(ctx, r, stream, cfg, state, forced)
 	}
-	return false
+	return continueLoop
 }
 
 // recordStream records a single stream session, managing force and recording flags.
 // when chapter tracking is configured, starts a tracker goroutine alongside the recording
 // and injects collected chapters into the file after recording completes.
-// returns true when the context is cancelled and the loop should exit.
-func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream, cfg runConfig, forced bool) bool {
+// returns stopLoop when the context is cancelled and the loop should exit.
+func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream, cfg runConfig, state *recordingState, forced bool) loopAction {
 	if forced {
-		cfg.forceRecord.Store(false)
+		state.forceRecord.Store(false)
 	}
 
 	// start chapter tracking if configured
@@ -288,39 +329,38 @@ func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream
 
 	// clear recording flag before chapter injection so live stream clients
 	// stop reading the file before it gets rewritten with chapter frames
-	if cfg.recording != nil {
-		cfg.recording.Store(false)
+	if state.recording != nil {
+		state.recording.Store(false)
 	}
 
 	if err != nil {
 		if ctx.Err() != nil {
-			maybeInjectChapters(tracker, filePath, cfg.injectChapters)
-			return true // clean shutdown
+			if filePath != "" {
+				maybeInjectChapters(tracker, filePath, cfg.injectChapters)
+			}
+			return stopLoop // clean shutdown
 		}
 		slog.Error("error while recording", slog.String("err", err.Error()))
-		return false
+		return continueLoop
 	}
 
 	maybeInjectChapters(tracker, filePath, cfg.injectChapters)
-	return false
+	return continueLoop
 }
 
 // maybeInjectChapters injects collected chapter markers into the recorded file.
 // does nothing when tracker is nil or no chapters were collected.
-func maybeInjectChapters(tracker chapterProvider, filePath string, inject func(string, []recorder.Chapter) error) {
-	if tracker == nil {
+func maybeInjectChapters(tracker chapterProvider, filePath string, inject func(string, []chapters.Chapter) error) {
+	if tracker == nil || inject == nil {
 		return
 	}
-	chapters := tracker.Chapters()
-	if len(chapters) == 0 {
+	chaps := tracker.Chapters()
+	if len(chaps) == 0 {
 		return
 	}
-	if inject == nil {
-		inject = recorder.InjectChapters
-	}
-	if err := inject(filePath, chapters); err != nil {
+	if err := inject(filePath, chaps); err != nil {
 		slog.Error("failed to inject chapters", slog.String("err", err.Error()))
 	} else {
-		slog.Info("injected chapter markers", slog.Int("count", len(chapters)))
+		slog.Info("injected chapter markers", slog.Int("count", len(chaps)))
 	}
 }

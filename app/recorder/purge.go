@@ -49,7 +49,7 @@ func purgeEpisodeDir(dir string, cutoff time.Time) error {
 		return fmt.Errorf("failed to read episode directory %s: %w", dir, err)
 	}
 
-	prefix := "rt" + filepath.Base(dir) + "_"
+	prefix := RecordingFilePrefix(filepath.Base(dir))
 	for _, f := range files {
 		if f.IsDir() || !isRecorderFile(f.Name(), prefix) {
 			continue

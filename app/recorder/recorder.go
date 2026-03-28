@@ -7,7 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -18,25 +18,37 @@ const buffer = 32 * 1024 // 32KB read buffer
 // inside a per-episode subdirectory.
 type Recorder struct {
 	dir     string
-	OnReady func() // called after the output file is created, before streaming begins
+	onReady func() // called after the output file is created, before streaming begins
 }
 
-// NewRecorder creates a new recorder
-func NewRecorder(dir string) *Recorder {
-	return &Recorder{ //nolint:exhaustruct // OnReady is optional
-		dir: dir,
+// NewRecorder creates a new recorder. onReady, when non-nil, is called after the
+// output file is created but before streaming begins.
+func NewRecorder(dir string, onReady func()) *Recorder {
+	return &Recorder{
+		dir:     dir,
+		onReady: onReady,
 	}
 }
 
+// RecordingFileName returns the full filename for a recording of the given episode at time t.
+func RecordingFileName(episode string, t time.Time) string {
+	return RecordingFilePrefix(episode) + t.Format("2006_01_02_15_04_05") + ".mp3"
+}
+
+// RecordingFilePrefix returns the filename prefix shared by all recordings of the given episode.
+func RecordingFilePrefix(episode string) string {
+	return "rt" + episode + "_"
+}
+
 func (r *Recorder) prepareFile(episode string) (*os.File, error) {
-	fileDir := path.Join(r.dir, episode)
+	fileDir := filepath.Join(r.dir, episode)
 
 	if err := os.MkdirAll(fileDir, 0o750); err != nil {
 		return nil, fmt.Errorf("failed to create %s directory: %w", fileDir, err)
 	}
 
-	fileName := "rt" + episode + "_" + time.Now().Format("2006_01_02_15_04_05") + ".mp3"
-	filePath := path.Join(fileDir, fileName)
+	fileName := RecordingFileName(episode, time.Now())
+	filePath := filepath.Join(fileDir, fileName)
 
 	f, err := os.Create(filePath) //nolint: gosec
 	if err != nil {
@@ -64,14 +76,14 @@ func (r *Recorder) Record(ctx context.Context, s *Stream) (string, error) { //no
 	}
 	defer f.Close() //nolint: errcheck
 
-	if r.OnReady != nil {
-		r.OnReady()
+	if r.onReady != nil {
+		r.onReady()
 	}
 
 	// if context was cancelled between the check above and file creation, clean up the empty file
 	if ctx.Err() != nil {
-		os.Remove(f.Name())           //nolint: errcheck,gosec // best-effort cleanup
-		os.Remove(path.Dir(f.Name())) //nolint: errcheck,gosec // removes dir only if empty
+		os.Remove(f.Name())               //nolint: errcheck,gosec // best-effort cleanup
+		os.Remove(filepath.Dir(f.Name())) //nolint: errcheck,gosec // removes dir only if empty
 		return "", ctx.Err()
 	}
 

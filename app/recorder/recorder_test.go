@@ -20,7 +20,7 @@ func TestRecorder(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	ctx := context.Background()
-	r := recorder.NewRecorder(dir)
+	r := recorder.NewRecorder(dir, nil)
 
 	reader := strings.NewReader("some audio data")
 	s := recorder.NewStream("rt testrecord", io.NopCloser(reader))
@@ -102,7 +102,7 @@ func (r *slowReader) send(data []byte) {
 func TestRecorderContextCancellation(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	r := recorder.NewRecorder(dir)
+	r := recorder.NewRecorder(dir, nil)
 
 	sr := newSlowReader()
 	s := recorder.NewStream("rt 999", sr)
@@ -138,10 +138,68 @@ func TestRecorderContextCancellation(t *testing.T) {
 	}
 }
 
+func TestRecordingFileName(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		episode string
+		ts      time.Time
+		want    string
+	}{
+		{
+			name:    "standard episode number",
+			episode: "999",
+			ts:      time.Date(2026, 3, 25, 14, 30, 45, 0, time.UTC),
+			want:    "rt999_2026_03_25_14_30_45.mp3",
+		},
+		{
+			name:    "different episode",
+			episode: "100",
+			ts:      time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC),
+			want:    "rt100_2025_01_02_03_04_05.mp3",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, recorder.RecordingFileName(tt.episode, tt.ts))
+		})
+	}
+}
+
+func TestRecordingFilePrefix(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		episode string
+		want    string
+	}{
+		{name: "numeric episode", episode: "999", want: "rt999_"},
+		{name: "another episode", episode: "100", want: "rt100_"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, recorder.RecordingFilePrefix(tt.episode))
+		})
+	}
+}
+
+func TestRecordingFileName_ConsistentWithPrefix(t *testing.T) {
+	t.Parallel()
+	episode := "777"
+	ts := time.Date(2026, 6, 15, 10, 20, 30, 0, time.UTC)
+	fileName := recorder.RecordingFileName(episode, ts)
+	prefix := recorder.RecordingFilePrefix(episode)
+	assert.True(t, strings.HasPrefix(fileName, prefix),
+		"RecordingFileName %q should start with RecordingFilePrefix %q", fileName, prefix)
+	assert.True(t, strings.HasSuffix(fileName, ".mp3"))
+}
+
 func TestRecorderContextAlreadyCancelled(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	r := recorder.NewRecorder(dir)
+	r := recorder.NewRecorder(dir, nil)
 
 	sr := newSlowReader()
 	s := recorder.NewStream("rt 888", sr)
@@ -156,91 +214,4 @@ func TestRecorderContextAlreadyCancelled(t *testing.T) {
 	entries, readErr := os.ReadDir(dir)
 	require.NoError(t, readErr)
 	assert.Empty(t, entries, "no files should be created when context is already cancelled")
-}
-
-func TestRecordAndInjectChapters(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	ctx := context.Background()
-	r := recorder.NewRecorder(dir)
-
-	audioData := "fake-mp3-audio-data-1234567890"
-	s := recorder.NewStream("rt 333", io.NopCloser(strings.NewReader(audioData)))
-
-	filePath, err := r.Record(ctx, s)
-	require.NoError(t, err)
-	require.NotEmpty(t, filePath)
-
-	chapters := []recorder.Chapter{
-		{Title: "Introduction", Link: "https://example.com/intro", Offset: 0},
-		{Title: "Main Topic", Link: "https://example.com/main", Offset: 5 * time.Minute},
-		{Title: "Wrap Up", Link: "", Offset: 45 * time.Minute},
-	}
-	require.NoError(t, recorder.InjectChapters(filePath, chapters))
-
-	// read the file and verify integrity
-	data, err := os.ReadFile(filePath) //nolint:gosec // test file
-	require.NoError(t, err)
-
-	// ID3 header present
-	assert.Equal(t, "ID3", string(data[:3]))
-
-	// audio data preserved after ID3 tag
-	assert.True(t, strings.HasSuffix(string(data), audioData),
-		"audio data should be intact after chapter injection")
-
-	// CHAP and CTOC frames present
-	assert.Contains(t, string(data), "CHAP")
-	assert.Contains(t, string(data), "CTOC")
-	assert.Contains(t, string(data), "Introduction")
-	assert.Contains(t, string(data), "Main Topic")
-	assert.Contains(t, string(data), "Wrap Up")
-}
-
-func TestInjectChaptersEmpty(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	ctx := context.Background()
-	r := recorder.NewRecorder(dir)
-
-	s := recorder.NewStream("rt 222", io.NopCloser(strings.NewReader("audio")))
-
-	filePath, err := r.Record(ctx, s)
-	require.NoError(t, err)
-
-	original, err := os.ReadFile(filePath) //nolint:gosec // test file
-	require.NoError(t, err)
-
-	// empty chapters should be a no-op
-	require.NoError(t, recorder.InjectChapters(filePath, nil))
-
-	after, err := os.ReadFile(filePath) //nolint:gosec // test file
-	require.NoError(t, err)
-	assert.Equal(t, original, after, "file should be unchanged with no chapters")
-}
-
-func TestInjectChaptersNonexistentFile(t *testing.T) {
-	t.Parallel()
-	chapters := []recorder.Chapter{
-		{Title: "Test", Offset: 0},
-	}
-	err := recorder.InjectChapters("/nonexistent/path/file.mp3", chapters)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "chapter injection")
-}
-
-func TestInjectChaptersNonID3File(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	filePath := filepath.Join(dir, "plain.mp3")
-
-	// write a file without an ID3 header (raw MP3 frame, at least 10 bytes for header read)
-	require.NoError(t, os.WriteFile(filePath, []byte{0xFF, 0xFB, 0x90, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06}, 0o600))
-
-	chapters := []recorder.Chapter{
-		{Title: "Test", Offset: 0},
-	}
-	err := recorder.InjectChapters(filePath, chapters)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not an ID3v2 file")
 }

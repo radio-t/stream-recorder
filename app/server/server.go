@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -135,7 +134,7 @@ func listEpisodes(dir string) ([]episode, error) { //nolint:gocyclo // flat stru
 		if !d.IsDir() {
 			continue
 		}
-		files, err := os.ReadDir(path.Join(dir, d.Name()))
+		files, err := os.ReadDir(filepath.Join(dir, d.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("reading episode dir: %w", err)
 		}
@@ -303,6 +302,19 @@ func validPathSegment(s string) bool {
 	return s != "" && s != "." && !strings.Contains(s, "..") && !strings.Contains(s, "/")
 }
 
+// isSubPath checks that target is a path under the base directory.
+func isSubPath(base, target string) bool {
+	absBase, err := filepath.Abs(base)
+	if err != nil {
+		return false
+	}
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(absTarget, absBase+string(filepath.Separator))
+}
+
 // DownloadFileHandler serves a single file from an episode directory.
 // if ?download is set, forces a download instead of inline playback.
 func (s *Server) DownloadFileHandler(w http.ResponseWriter, r *http.Request) {
@@ -312,7 +324,11 @@ func (s *Server) DownloadFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath := path.Join(s.dir, folder, file)
+	filePath := filepath.Join(s.dir, folder, file)
+	if !isSubPath(s.dir, filePath) {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
 	fi, err := os.Stat(filePath) //nolint:gosec,nolintlint // path components validated above
 	if err != nil || fi.IsDir() {
 		http.NotFound(w, r)
@@ -374,7 +390,7 @@ func (s *Server) activeFileInfo() (episodeName, filePath string) {
 	if len(last.Files) == 0 {
 		return "", ""
 	}
-	return last.Name, path.Join(s.dir, last.Name, last.Files[len(last.Files)-1])
+	return last.Name, filepath.Join(s.dir, last.Name, last.Files[len(last.Files)-1])
 }
 
 // tailFile reads from f and writes to w, waiting for more data when EOF is reached
@@ -411,18 +427,13 @@ func (s *Server) tailFile(f *os.File, w http.ResponseWriter, r *http.Request, fl
 // DownloadEpisodeHandler zips files for a single episode directory and downloads it
 func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) {
 	folder := r.PathValue("folder")
-	if !validPathSegment(folder) {
+	dirPath := filepath.Join(s.dir, folder)
+	if !validPathSegment(folder) || !isSubPath(s.dir, dirPath) {
 		http.Error(w, "invalid episode", http.StatusBadRequest)
 		return
 	}
-
-	dirPath := path.Join(s.dir, folder)
-	fi, err := os.Stat(dirPath) //nolint:gosec,nolintlint // folder validated above: no ".." or "/"
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	if !fi.IsDir() {
+	fi, err := os.Stat(dirPath) //nolint:gosec,nolintlint // path validated above
+	if err != nil || !fi.IsDir() {
 		http.NotFound(w, r)
 		return
 	}
@@ -433,21 +444,27 @@ func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) 
 	writer := zip.NewWriter(w)
 	defer writer.Close() //nolint:errcheck
 
-	entries, readErr := os.ReadDir(dirPath)
-	if readErr != nil {
-		slog.Error("error reading episode dir for zip", slog.String("error", readErr.Error())) //nolint:gosec // error from local filesystem
-		return
+	if err := zipDir(writer, dirPath); err != nil {
+		slog.Error("error zipping episode dir", slog.String("error", err.Error()))
+	}
+}
+
+// zipDir writes all regular files from dir into the zip writer, skipping directories and .tmp files.
+func zipDir(w *zip.Writer, dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read dir: %w", err)
 	}
 	for _, entry := range entries {
 		if entry.IsDir() || strings.HasSuffix(entry.Name(), ".tmp") {
 			continue // skip transient temp files (e.g. chapter injection)
 		}
-		fp := path.Join(dirPath, entry.Name())
-		src, openErr := os.Open(fp) //nolint:gosec // folder validated above
+		fp := filepath.Join(dir, entry.Name())
+		src, openErr := os.Open(fp) //nolint:gosec // caller validates dir
 		if openErr != nil {
 			continue
 		}
-		dst, createErr := writer.Create(entry.Name())
+		dst, createErr := w.Create(entry.Name())
 		if createErr != nil {
 			src.Close() //nolint:errcheck,gosec
 			continue
@@ -455,4 +472,5 @@ func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) 
 		io.Copy(dst, src) //nolint:errcheck,gosec
 		src.Close()       //nolint:errcheck,gosec
 	}
+	return nil
 }
