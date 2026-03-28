@@ -9,16 +9,16 @@ import (
 	"sync"
 )
 
-// Ensure, that ClientServiceMock does implement ClientService.
+// Ensure, that StreamSourceMock does implement StreamSource.
 // If this is not the case, regenerate this file with moq.
-var _ ClientService = &ClientServiceMock{}
+var _ StreamSource = &StreamSourceMock{}
 
-// ClientServiceMock is a mock implementation of ClientService.
+// StreamSourceMock is a mock implementation of StreamSource.
 //
-//	func TestSomethingThatUsesClientService(t *testing.T) {
+//	func TestSomethingThatUsesStreamSource(t *testing.T) {
 //
-//		// make and configure a mocked ClientService
-//		mockedClientService := &ClientServiceMock{
+//		// make and configure a mocked StreamSource
+//		mockedStreamSource := &StreamSourceMock{
 //			FetchLatestFunc: func(ctx context.Context) (string, error) {
 //				panic("mock out the FetchLatest method")
 //			},
@@ -27,11 +27,11 @@ var _ ClientService = &ClientServiceMock{}
 //			},
 //		}
 //
-//		// use mockedClientService in code that requires ClientService
+//		// use mockedStreamSource in code that requires StreamSource
 //		// and then make assertions.
 //
 //	}
-type ClientServiceMock struct {
+type StreamSourceMock struct {
 	// FetchLatestFunc mocks the FetchLatest method.
 	FetchLatestFunc func(ctx context.Context) (string, error)
 
@@ -56,9 +56,9 @@ type ClientServiceMock struct {
 }
 
 // FetchLatest calls FetchLatestFunc.
-func (mock *ClientServiceMock) FetchLatest(ctx context.Context) (string, error) {
+func (mock *StreamSourceMock) FetchLatest(ctx context.Context) (string, error) {
 	if mock.FetchLatestFunc == nil {
-		panic("ClientServiceMock.FetchLatestFunc: method is nil but ClientService.FetchLatest was just called")
+		panic("StreamSourceMock.FetchLatestFunc: method is nil but StreamSource.FetchLatest was just called")
 	}
 	callInfo := struct {
 		Ctx context.Context
@@ -74,8 +74,8 @@ func (mock *ClientServiceMock) FetchLatest(ctx context.Context) (string, error) 
 // FetchLatestCalls gets all the calls that were made to FetchLatest.
 // Check the length with:
 //
-//	len(mockedClientService.FetchLatestCalls())
-func (mock *ClientServiceMock) FetchLatestCalls() []struct {
+//	len(mockedStreamSource.FetchLatestCalls())
+func (mock *StreamSourceMock) FetchLatestCalls() []struct {
 	Ctx context.Context
 } {
 	var calls []struct {
@@ -88,9 +88,9 @@ func (mock *ClientServiceMock) FetchLatestCalls() []struct {
 }
 
 // FetchStream calls FetchStreamFunc.
-func (mock *ClientServiceMock) FetchStream(ctx context.Context) (io.ReadCloser, error) {
+func (mock *StreamSourceMock) FetchStream(ctx context.Context) (io.ReadCloser, error) {
 	if mock.FetchStreamFunc == nil {
-		panic("ClientServiceMock.FetchStreamFunc: method is nil but ClientService.FetchStream was just called")
+		panic("StreamSourceMock.FetchStreamFunc: method is nil but StreamSource.FetchStream was just called")
 	}
 	callInfo := struct {
 		Ctx context.Context
@@ -106,8 +106,8 @@ func (mock *ClientServiceMock) FetchStream(ctx context.Context) (io.ReadCloser, 
 // FetchStreamCalls gets all the calls that were made to FetchStream.
 // Check the length with:
 //
-//	len(mockedClientService.FetchStreamCalls())
-func (mock *ClientServiceMock) FetchStreamCalls() []struct {
+//	len(mockedStreamSource.FetchStreamCalls())
+func (mock *StreamSourceMock) FetchStreamCalls() []struct {
 	Ctx context.Context
 } {
 	var calls []struct {

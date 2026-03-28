@@ -129,12 +129,12 @@
 - Modify: `app/recorder/httpclient_moq_test.go` (regenerate if needed)
 - Modify: `app/recorder/clientservice_moq_test.go` (regenerate)
 
-- [ ] rename `ClientService` interface to `StreamSource` in `listener.go`
-- [ ] unexport and rename `SiteAPIUrl` to `siteAPIURL` in `client.go`
-- [ ] unexport and rename `Entry` to `siteEntry` in `client.go` (only used internally)
-- [ ] regenerate moq mocks: `go generate ./app/recorder/...`
-- [ ] update all references in tests
-- [ ] run tests and linter — must pass
+- [x] rename `ClientService` interface to `StreamSource` in `listener.go`
+- [x] unexport and rename `SiteAPIUrl` to `siteAPIURL` in `client.go`
+- [x] unexport and rename `Entry` to `siteEntry` in `client.go` (only used internally)
+- [x] regenerate moq mocks: `go generate ./app/recorder/...`
+- [x] update all references in tests
+- [x] run tests and linter — must pass
 
 ### Task 7: Replace bool return with named type
 

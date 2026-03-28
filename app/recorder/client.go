@@ -24,7 +24,7 @@ type HTTPClient interface {
 type Client struct {
 	client     HTTPClient
 	Stream     string
-	SiteAPIUrl string
+	siteAPIURL string
 }
 
 // NewClient creates a new client with stream and site api urls
@@ -32,21 +32,21 @@ func NewClient(c HTTPClient, stream, site string) *Client {
 	return &Client{
 		client:     c,
 		Stream:     stream,
-		SiteAPIUrl: site,
+		siteAPIURL: site,
 	}
 }
 
 // ErrNotFound is returned when the stream is not found
 var ErrNotFound = errors.New("not found")
 
-// Entry represents a single entry from the SiteAPI
-type Entry struct {
+// siteEntry represents a single entry from the SiteAPI
+type siteEntry struct {
 	Title string `json:"title"`
 }
 
 // FetchLatest fetches the latest entry from the SiteAPI to find out the title of the stream
 func (c *Client) FetchLatest(ctx context.Context) (string, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.SiteAPIUrl, http.NoBody)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.siteAPIURL, http.NoBody)
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}
@@ -66,7 +66,7 @@ func (c *Client) FetchLatest(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("error reading response: %w", err)
 	}
 
-	var entries []Entry
+	var entries []siteEntry
 	err = json.Unmarshal(body, &entries)
 	if err != nil {
 		return "", fmt.Errorf("error unmarshalling response: %w", err)
