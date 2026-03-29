@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -18,6 +19,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/radio-t/stream-recorder/app/chapters"
+	"github.com/radio-t/stream-recorder/app/id3"
 	"github.com/radio-t/stream-recorder/app/recorder"
 	"github.com/radio-t/stream-recorder/app/server"
 )
@@ -119,8 +121,8 @@ type runConfig struct {
 	schedule          bool // enable time-based recording window
 	tickInterval      time.Duration
 	nowFn             func() time.Time
-	newChapterTracker func() chapterProvider                 // nil = chapter tracking disabled
-	injectChapters    func(string, []chapters.Chapter) error // defaults to chapters.InjectChapters
+	newChapterTracker func() chapterProvider                             // nil = chapter tracking disabled
+	injectMetadata    func(string, time.Duration, chapterProvider) error // post-recording metadata injection
 }
 
 // recordingState holds mutable runtime state for the recording loop.
@@ -133,18 +135,21 @@ type recordingState struct {
 
 // newRunConfig creates a runConfig with standard defaults, optionally enabling chapter tracking.
 func newRunConfig(schedule bool, newsAPI string) runConfig {
-	cfg := runConfig{ //nolint:exhaustruct // newChapterTracker and injectChapters set conditionally below
-		schedule:     schedule,
-		tickInterval: 5 * time.Second, //nolint:mnd
-		nowFn:        time.Now,
+	cfg := runConfig{ //nolint:exhaustruct // newChapterTracker set conditionally below
+		schedule:       schedule,
+		tickInterval:   5 * time.Second, //nolint:mnd
+		nowFn:          time.Now,
+		injectMetadata: defaultInjectMetadata,
 	}
 	if newsAPI != "" {
 		slog.Info("Chapter tracking enabled", slog.String("news_api", newsAPI))
 		cfg.newChapterTracker = func() chapterProvider {
 			nc := chapters.NewNewsClient(http.DefaultClient, newsAPI)
-			return chapters.NewChapterTracker(nc, time.Now)
+			return chapters.NewChapterTracker(nc, time.Now, showHour)
 		}
-		cfg.injectChapters = chapters.InjectChapters
+		cfg.injectMetadata = func(filePath string, duration time.Duration, tracker chapterProvider) error {
+			return injectPostRecordingMetadata(filePath, duration, tracker, chapters.BuildChapterFrames) //nolint:wrapcheck // thin wrapper
+		}
 	}
 	return cfg
 }
@@ -317,11 +322,14 @@ func makeScheduleStatusFn(schedule bool) func() server.ScheduleStatus {
 		if !inScheduleWindow(now) {
 			return server.ScheduleStatus{} //nolint:exhaustruct // zero value means outside window
 		}
+		ttShow := timeToShow(now)
 		status := "show in progress"
-		if ttShow := timeToShow(now); ttShow > 0 {
+		showMin := 0
+		if ttShow > 0 {
+			showMin = int(ttShow.Minutes())
 			status = fmtDuration(ttShow) + " to show"
 		}
-		return server.ScheduleStatus{InWindow: true, ShowStatus: status}
+		return server.ScheduleStatus{InWindow: true, ShowStatus: status, ShowMinutes: showMin}
 	}
 }
 
@@ -451,17 +459,19 @@ func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream
 		if ctx.Err() != nil {
 			logRecordingFinished("recording stopped", stream.Number, filePath, duration)
 			if filePath != "" {
-				maybeInjectChapters(tracker, filePath, cfg.injectChapters)
+				tryInjectMetadata(cfg, filePath, duration, tracker)
 			}
 			return stopLoop // clean shutdown
 		}
 		slog.Error("error while recording", slog.String("err", err.Error()))
-		slog.Info("stream lost, waiting for reconnect", slog.String("episode", stream.Number))
+		if strings.Contains(err.Error(), "failed to read from stream") {
+			slog.Info("stream lost, waiting for reconnect", slog.String("episode", stream.Number))
+		}
 		return continueLoop
 	}
 
 	logRecordingFinished("finished recording", stream.Number, filePath, duration)
-	maybeInjectChapters(tracker, filePath, cfg.injectChapters)
+	tryInjectMetadata(cfg, filePath, duration, tracker)
 	return continueLoop
 }
 
@@ -476,19 +486,35 @@ func logRecordingFinished(msg, episode, filePath string, duration time.Duration)
 	slog.Info(msg, attrs...)
 }
 
-// maybeInjectChapters injects collected chapter markers into the recorded file.
-// does nothing when tracker is nil or no chapters were collected.
-func maybeInjectChapters(tracker chapterProvider, filePath string, inject func(string, []chapters.Chapter) error) {
-	if tracker == nil || inject == nil {
+// tryInjectMetadata calls the configured metadata injector if set.
+func tryInjectMetadata(cfg runConfig, filePath string, duration time.Duration, tracker chapterProvider) {
+	if cfg.injectMetadata == nil {
 		return
 	}
-	chaps := tracker.Chapters()
-	if len(chaps) == 0 {
-		return
+	if err := cfg.injectMetadata(filePath, duration, tracker); err != nil {
+		slog.Error("failed to inject metadata", slog.String("err", err.Error()))
 	}
-	if err := inject(filePath, chaps); err != nil {
-		slog.Error("failed to inject chapters", slog.String("err", err.Error()))
-	} else {
-		slog.Info("injected chapter markers", slog.Int("count", len(chaps)))
+}
+
+// defaultInjectMetadata is the default metadata injector (TLEN only, no chapters).
+func defaultInjectMetadata(filePath string, duration time.Duration, tracker chapterProvider) error {
+	return injectPostRecordingMetadata(filePath, duration, tracker, nil) //nolint:wrapcheck // thin wrapper
+}
+
+// injectPostRecordingMetadata writes TLEN and chapter markers into the recorded file
+// in a single file rewrite pass.
+func injectPostRecordingMetadata(filePath string, duration time.Duration,
+	tracker chapterProvider, buildChapFrames func([]chapters.Chapter) []byte) error {
+	// build TLEN frame
+	frames := recorder.TLENFrame(duration)
+
+	// build chapter frames if available
+	if tracker != nil && buildChapFrames != nil {
+		if chaps := tracker.Chapters(); len(chaps) > 0 {
+			frames = append(frames, buildChapFrames(chaps)...)
+			slog.Info("injected chapter markers", slog.Int("count", len(chaps)))
+		}
 	}
+
+	return id3.InjectFrames(filePath, frames)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 )
 
@@ -28,6 +29,8 @@ func NewListener(c StreamSource) *Listener {
 	}
 }
 
+// getStreamNumber extracts the episode number from the site API title and increments it.
+// the API returns the last published episode, but we're always recording the next one.
 func getStreamNumber(latest string) string {
 	args := strings.Fields(latest)
 	if len(args) < 2 { //nolint:mnd
@@ -37,7 +40,11 @@ func getStreamNumber(latest string) string {
 	if num == "" || num == "." || strings.Contains(num, "..") || strings.ContainsAny(num, "/\\") {
 		return "0"
 	}
-	return num
+	n, err := strconv.Atoi(num)
+	if err != nil {
+		return num
+	}
+	return strconv.Itoa(n + 1)
 }
 
 // Stream represents a stream

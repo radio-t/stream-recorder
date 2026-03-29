@@ -25,21 +25,31 @@ import (
 	"github.com/didip/tollbooth/v8/limiter"
 	"github.com/go-pkgz/routegroup"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/radio-t/stream-recorder/app/id3"
 )
 
 //go:embed static/index.html
 var indexTemplateFS embed.FS
 
+// fileInfo represents a single recording file with its metadata.
+type fileInfo struct {
+	Name     string
+	Size     string // human-readable file size
+	Duration string // estimated duration from file size at 128kbps
+}
+
 // episode represents a recorded episode directory with its files
 type episode struct {
 	Name  string
-	Files []string
+	Files []fileInfo
 }
 
 // ScheduleStatus represents the current state of the recording window.
 type ScheduleStatus struct {
-	InWindow   bool
-	ShowStatus string // e.g. "32m to show" or "show in progress"
+	InWindow    bool
+	ShowStatus  string // e.g. "32m to show" or "show in progress"
+	ShowMinutes int    // minutes until show start, 0 when show is in progress or outside window
 }
 
 // Server is the main struct for the server
@@ -147,14 +157,26 @@ func listEpisodes(dir string) ([]episode, error) { //nolint:gocyclo // flat stru
 		if err != nil {
 			return nil, fmt.Errorf("reading episode dir: %w", err)
 		}
-		var fileNames []string
+		var fileInfos []fileInfo
 		for _, f := range files {
 			if strings.HasSuffix(f.Name(), ".tmp") {
 				continue // skip transient temp files (e.g. chapter injection)
 			}
-			fileNames = append(fileNames, f.Name())
+			var size string
+			var duration string
+			if info, infoErr := f.Info(); infoErr == nil {
+				sz := info.Size()
+				size = fmtBytes(sz)
+				filePath := filepath.Join(dir, d.Name(), f.Name())
+				if tlen := id3.ReadTLEN(filePath); tlen > 0 {
+					duration = fmtDurationSecs(tlen)
+				} else {
+					duration = estimateDuration(sz)
+				}
+			}
+			fileInfos = append(fileInfos, fileInfo{Name: f.Name(), Size: size, Duration: duration})
 		}
-		episodes = append(episodes, episode{Name: d.Name(), Files: fileNames})
+		episodes = append(episodes, episode{Name: d.Name(), Files: fileInfos})
 	}
 
 	// sort episodes numerically so "1000" comes after "999"
@@ -189,7 +211,7 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 		last := episodes[len(episodes)-1]
 		activeEpisode = last.Name
 		if len(last.Files) > 0 {
-			activeFile = last.Name + "/" + last.Files[len(last.Files)-1]
+			activeFile = last.Name + "/" + last.Files[len(last.Files)-1].Name
 		}
 	}
 
@@ -208,6 +230,7 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 		AuthEnabled     bool
 		InWindow        bool
 		ShowStatus      string
+		ShowMinutes     int
 	}{
 		Episodes:        episodes,
 		ShowForceRecord: s.forceRecord != nil,
@@ -218,6 +241,7 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 		AuthEnabled:     s.authPasswd != "",
 		InWindow:        schedStatus.InWindow,
 		ShowStatus:      schedStatus.ShowStatus,
+		ShowMinutes:     schedStatus.ShowMinutes,
 	}
 
 	var buf bytes.Buffer
@@ -315,6 +339,41 @@ func getCapacity(dir string) (int, error) {
 	return capacity, nil
 }
 
+// fmtBytes formats a byte count as a human-readable string.
+func fmtBytes(b int64) string {
+	const (
+		mb = 1024 * 1024
+		gb = 1024 * 1024 * 1024
+	)
+	switch {
+	case b >= gb:
+		return fmt.Sprintf("%.1fGB", float64(b)/float64(gb))
+	case b >= mb:
+		return fmt.Sprintf("%.1fMB", float64(b)/float64(mb))
+	default:
+		return fmt.Sprintf("%dKB", b/1024) //nolint:mnd
+	}
+}
+
+// fmtDurationSecs formats seconds as a human-readable duration string.
+func fmtDurationSecs(secs int64) string {
+	h := secs / 3600        //nolint:mnd
+	m := (secs % 3600) / 60 //nolint:mnd
+	if h > 0 {
+		return fmt.Sprintf("%dh%02dm", h, m)
+	}
+	if m == 0 {
+		return fmt.Sprintf("%ds", secs)
+	}
+	return fmt.Sprintf("%dm", m)
+}
+
+// estimateDuration estimates audio duration from file size assuming 128kbps bitrate.
+func estimateDuration(size int64) string {
+	const bitrate = 128 * 1024 / 8 // 128kbps in bytes per second
+	return fmtDurationSecs(size / int64(bitrate))
+}
+
 // validPathSegment returns true if the segment is safe to use in a file path.
 func validPathSegment(s string) bool {
 	return s != "" && s != "." && !strings.Contains(s, "..") && !strings.Contains(s, "/")
@@ -408,7 +467,7 @@ func (s *Server) activeFileInfo() (episodeName, filePath string) {
 	if len(last.Files) == 0 {
 		return "", ""
 	}
-	return last.Name, filepath.Join(s.dir, last.Name, last.Files[len(last.Files)-1])
+	return last.Name, filepath.Join(s.dir, last.Name, last.Files[len(last.Files)-1].Name)
 }
 
 // tailFile reads from f and writes to w, waiting for more data when EOF is reached

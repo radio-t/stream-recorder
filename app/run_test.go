@@ -265,7 +265,6 @@ func TestPollAndRecord_WithChapterTracking(t *testing.T) {
 	}
 
 	var injectedPath string
-	var injectedChaps []chapters.Chapter
 
 	ml := &mockStreamListener{
 		listenFn: func(_ context.Context) (*recorder.Stream, error) {
@@ -285,9 +284,9 @@ func TestPollAndRecord_WithChapterTracking(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectChapters: func(path string, chs []chapters.Chapter) error {
-			injectedPath = path
-			injectedChaps = chs
+		injectMetadata: func(fp string, _ time.Duration, tp chapterProvider) error {
+			injectedPath = fp
+			assert.Equal(t, chaps, tp.Chapters(), "tracker should have collected chapters")
 			return nil
 		},
 	}
@@ -296,8 +295,7 @@ func TestPollAndRecord_WithChapterTracking(t *testing.T) {
 	action := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
 	assert.Equal(t, continueLoop, action)
-	assert.Equal(t, testRecordedPath, injectedPath, "chapters should be injected into recorded file")
-	assert.Equal(t, chaps, injectedChaps, "all collected chapters should be passed to injection")
+	assert.Equal(t, testRecordedPath, injectedPath, "metadata should be injected into recorded file")
 }
 
 func TestPollAndRecord_ChapterTrackingDisabled(t *testing.T) {
@@ -333,7 +331,7 @@ func TestPollAndRecord_NoChaptersCollected(t *testing.T) {
 		chapters:  nil, // no chapters collected
 	}
 
-	var injectionCalled bool
+	var metadataInjected bool
 
 	ml := &mockStreamListener{
 		listenFn: func(_ context.Context) (*recorder.Stream, error) {
@@ -353,8 +351,9 @@ func TestPollAndRecord_NoChaptersCollected(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectChapters: func(_ string, _ []chapters.Chapter) error {
-			injectionCalled = true
+		injectMetadata: func(_ string, _ time.Duration, tp chapterProvider) error {
+			metadataInjected = true
+			assert.Empty(t, tp.Chapters(), "tracker should have no chapters")
 			return nil
 		},
 	}
@@ -362,7 +361,7 @@ func TestPollAndRecord_NoChaptersCollected(t *testing.T) {
 	ctx := context.Background()
 	pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
-	assert.False(t, injectionCalled, "injection should not be called when no chapters collected")
+	assert.True(t, metadataInjected, "metadata injection should be called for TLEN even without chapters")
 }
 
 func TestPollAndRecord_ChapterTrackingRecordingFails(t *testing.T) {
@@ -391,7 +390,7 @@ func TestPollAndRecord_ChapterTrackingRecordingFails(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectChapters: func(_ string, _ []chapters.Chapter) error {
+		injectMetadata: func(_ string, _ time.Duration, _ chapterProvider) error {
 			injectionCalled = true
 			return nil
 		},
@@ -428,7 +427,7 @@ func TestPollAndRecord_ChapterInjectionError(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectChapters: func(_ string, _ []chapters.Chapter) error {
+		injectMetadata: func(_ string, _ time.Duration, _ chapterProvider) error {
 			return fmt.Errorf("injection failed")
 		},
 	}
@@ -453,7 +452,6 @@ func TestPollAndRecord_ChapterInjectionOnContextCancel(t *testing.T) {
 	}
 
 	var injectedPath string
-	var injectedChaps []chapters.Chapter
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -476,9 +474,9 @@ func TestPollAndRecord_ChapterInjectionOnContextCancel(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectChapters: func(path string, chs []chapters.Chapter) error {
-			injectedPath = path
-			injectedChaps = chs
+		injectMetadata: func(fp string, _ time.Duration, tp chapterProvider) error {
+			injectedPath = fp
+			assert.Equal(t, chaps, tp.Chapters(), "tracker should have collected chapters")
 			return nil
 		},
 	}
@@ -486,8 +484,7 @@ func TestPollAndRecord_ChapterInjectionOnContextCancel(t *testing.T) {
 	action := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
 
 	assert.Equal(t, stopLoop, action, "should signal clean shutdown")
-	assert.Equal(t, testRecordedPath, injectedPath, "chapters should be injected even on context cancellation")
-	assert.Equal(t, chaps, injectedChaps, "all collected chapters should be passed to injection")
+	assert.Equal(t, testRecordedPath, injectedPath, "metadata should be injected even on context cancellation")
 }
 
 func TestInScheduleWindow(t *testing.T) {
@@ -730,7 +727,7 @@ func TestRun_ChapterTrackingPerRecording(t *testing.T) {
 				chapters:  nil,
 			}
 		},
-		injectChapters: func(_ string, _ []chapters.Chapter) error {
+		injectMetadata: func(_ string, _ time.Duration, _ chapterProvider) error {
 			return nil
 		},
 	}
