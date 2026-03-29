@@ -59,7 +59,7 @@ func siteAPIMock() *httpClientMock {
 			if req.URL.Path == "/site-api/last/1" {
 				return &http.Response{
 					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`[{"title": "Radio-T 999"}]`)),
+					Body:       io.NopCloser(strings.NewReader(`[{"title": "Radio-T 998"}]`)),
 				}, nil
 			}
 			return http.DefaultClient.Do(req) //nolint:gosec,nolintlint // test mock proxies to real client
@@ -112,7 +112,7 @@ func TestFullPipeline(t *testing.T) {
 	episodeDirs, err := os.ReadDir(recordsPath)
 	require.NoError(t, err)
 	require.Len(t, episodeDirs, 1)
-	assert.Equal(t, "999", episodeDirs[0].Name(), "episode directory should be named after episode number")
+	assert.Equal(t, "999", episodeDirs[0].Name(), "episode directory should be named after next episode number")
 
 	// verify recording file created with correct naming pattern
 	episodePath := filepath.Join(recordsPath, "999")

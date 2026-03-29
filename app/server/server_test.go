@@ -206,7 +206,7 @@ func TestIndexHandler(t *testing.T) {
 	t.Run("shows schedule badge when in window", func(t *testing.T) {
 		dir := setupTestDir(t)
 		srv := NewServer("0", dir, "", nil, nil, func() ScheduleStatus {
-			return ScheduleStatus{InWindow: true, ShowStatus: "32m to show"}
+			return ScheduleStatus{InWindow: true, ShowStatus: "32m to show", ShowMinutes: 32}
 		})
 
 		req := newRequest(t, "/")
@@ -215,15 +215,30 @@ func TestIndexHandler(t *testing.T) {
 
 		body := rec.Body.String()
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Contains(t, body, "LIVE WINDOW")
+		assert.Contains(t, body, "window-badge")
 		assert.Contains(t, body, "32m to show")
-		assert.Contains(t, body, `content="60"`, "should auto-refresh every 60s when in window")
+	})
+
+	t.Run("shows show in progress badge", func(t *testing.T) {
+		dir := setupTestDir(t)
+		srv := NewServer("0", dir, "", nil, nil, func() ScheduleStatus {
+			return ScheduleStatus{InWindow: true, ShowStatus: "show in progress", ShowMinutes: 0}
+		})
+
+		req := newRequest(t, "/")
+		rec := httptest.NewRecorder()
+		srv.IndexHandler(rec, req)
+
+		body := rec.Body.String()
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, body, "show in progress")
+		assert.NotContains(t, body, "<script>", "no countdown script when show already started")
 	})
 
 	t.Run("hides schedule badge when outside window", func(t *testing.T) {
 		dir := setupTestDir(t)
 		srv := NewServer("0", dir, "", nil, nil, func() ScheduleStatus {
-			return ScheduleStatus{InWindow: false}
+			return ScheduleStatus{}
 		})
 
 		req := newRequest(t, "/")
@@ -232,7 +247,7 @@ func TestIndexHandler(t *testing.T) {
 
 		body := rec.Body.String()
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.NotContains(t, body, "LIVE WINDOW")
+		assert.NotContains(t, body, "window-badge")
 	})
 
 	t.Run("hides schedule badge when schedule disabled", func(t *testing.T) {
@@ -245,7 +260,7 @@ func TestIndexHandler(t *testing.T) {
 
 		body := rec.Body.String()
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.NotContains(t, body, "LIVE WINDOW")
+		assert.NotContains(t, body, "window-badge")
 	})
 }
 
@@ -779,7 +794,7 @@ func TestListEpisodes(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(epDir, "a.mp3"), []byte("data"), 0o600))
 				return dir
 			},
-			expected: []episode{{Name: "999", Files: []string{"a.mp3"}}},
+			expected: []episode{{Name: "999", Files: []fileInfo{{Name: "a.mp3", Size: "0KB", Duration: "0s"}}}},
 		},
 		{
 			name: "skips regular files in root",
@@ -792,7 +807,7 @@ func TestListEpisodes(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(epDir, "a.mp3"), []byte("data"), 0o600))
 				return dir
 			},
-			expected: []episode{{Name: "999", Files: []string{"a.mp3"}}},
+			expected: []episode{{Name: "999", Files: []fileInfo{{Name: "a.mp3", Size: "0KB", Duration: "0s"}}}},
 		},
 		{
 			name: "empty directory returns empty slice",

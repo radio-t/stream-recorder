@@ -105,7 +105,7 @@ func TestRecorderContextCancellation(t *testing.T) {
 	r := recorder.NewRecorder(dir, nil)
 
 	sr := newSlowReader()
-	s := recorder.NewStream("rt 999", sr)
+	s := recorder.NewStream("rt 998", sr)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -202,7 +202,7 @@ func TestRecorderContextAlreadyCancelled(t *testing.T) {
 	r := recorder.NewRecorder(dir, nil)
 
 	sr := newSlowReader()
-	s := recorder.NewStream("rt 888", sr)
+	s := recorder.NewStream("rt 887", sr)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before Record starts

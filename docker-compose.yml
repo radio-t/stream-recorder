@@ -4,7 +4,7 @@ services:
     container_name: streamrecorder
 
     ports:
-    - 8098:8080
+    - 8080:8080
 
     volumes:
     - ./records:/records
@@ -12,7 +12,7 @@ services:
     environment:
       - PORT=8080
       - DIR=/records
-      - DBG=true
+      #- DBG=true
       - TZ=UTC
       - SCHEDULE=true
       #- RETENTION_DAYS=30

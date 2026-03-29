@@ -96,7 +96,7 @@ func TestNewStreamSanitisesNumber(t *testing.T) {
 		title    string
 		expected string
 	}{
-		{name: "normal episode", title: "Radio-T 999", expected: "999"},
+		{name: "normal episode increments by 1", title: "Radio-T 998", expected: "999"},
 		{name: "single word returns 0", title: "Radio-T", expected: "0"},
 		{name: "empty string returns 0", title: "", expected: "0"},
 		{name: "path traversal returns 0", title: "Radio-T ../../../etc", expected: "0"},
@@ -104,7 +104,7 @@ func TestNewStreamSanitisesNumber(t *testing.T) {
 		{name: "backslash in number returns 0", title: "Radio-T foo\\bar", expected: "0"},
 		{name: "dots in number returns 0", title: "Radio-T ..", expected: "0"},
 		{name: "single dot returns 0", title: "Radio-T .", expected: "0"},
-		{name: "double space handled", title: "Radio-T  999", expected: "999"},
+		{name: "double space handled", title: "Radio-T  998", expected: "999"},
 	}
 
 	for _, tc := range tests {

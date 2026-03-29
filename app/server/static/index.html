@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {{if or .Recording .RecordRequested}}<meta http-equiv="refresh" content="5">{{else if .InWindow}}<meta http-equiv="refresh" content="60">{{end}}
+    {{if or .Recording .RecordRequested}}<meta http-equiv="refresh" content="5">{{end}}
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
@@ -12,7 +12,7 @@
   </head>
   <body>
     <main class="container" style="max-width:720px;margin:auto">
-      <h1>Stream Recorder{{if .InWindow}} <small><mark>LIVE WINDOW · {{.ShowStatus}}</mark></small>{{end}}</h1>
+      <h1>Stream Recorder{{if .InWindow}} <span id="window-badge" style="font-size:0.4em;vertical-align:middle;background:var(--pico-primary-background);color:var(--pico-primary-inverse);padding:0.2em 0.6em;border-radius:4px;white-space:nowrap">{{.ShowStatus}}</span>{{end}}</h1>
 
       {{if .ShowForceRecord}}
       {{if .Recording}}
@@ -50,16 +50,18 @@
               <td><a href="/episode/{{$ep}}">{{$ep}}</a></td>
               <td>
                 {{range .Files}}
-                  {{$key := printf "%s/%s" $ep .}}
+                  {{$key := printf "%s/%s" $ep .Name}}
                   {{if eq $key $active}}
                   <div aria-busy="true">
-                    <a href="/episode/{{$ep}}/{{.}}">{{.}}</a>
+                    <a href="/episode/{{$ep}}/{{.Name}}">{{.Name}}</a>
                     <small><ins>recording</ins></small>
+                    {{if .Size}}<small style="color:var(--pico-muted-color);margin-left:0.3em">{{.Size}}</small>{{end}}
                   </div>
                   {{else}}
                   <div>
-                    <a href="/episode/{{$ep}}/{{.}}?download" title="Download">&#x1F4BE;</a>
-                    <a href="/episode/{{$ep}}/{{.}}">{{.}}</a>
+                    <a href="/episode/{{$ep}}/{{.Name}}?download" title="Download">&#x1F4BE;</a>
+                    <a href="/episode/{{$ep}}/{{.Name}}">{{.Name}}</a>
+                    {{if .Size}}<small style="color:var(--pico-muted-color);margin-left:0.3em">{{.Size}}{{if .Duration}}, {{.Duration}}{{end}}</small>{{end}}
                   </div>
                   {{end}}
                 {{end}}
@@ -73,5 +75,22 @@
         </tbody>
       </table>
     </main>
+    {{if and .InWindow (gt .ShowMinutes 0)}}
+    <script>
+      (function() {
+        var left = {{.ShowMinutes}};
+        var badge = document.getElementById("window-badge");
+        if (!badge) return;
+        setInterval(function() {
+          left--;
+          if (left <= 0) { badge.textContent = "show in progress"; return; }
+          var h = Math.floor(left / 60);
+          var m = left % 60;
+          var t = h > 0 ? h + "h" + (m < 10 ? "0" : "") + m + "m" : m + "m";
+          badge.textContent = t + " to show";
+        }, 60000);
+      })();
+    </script>
+    {{end}}
   </body>
 </html>

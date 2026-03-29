@@ -26,20 +26,23 @@ type NewsProvider interface {
 
 // ChapterTracker collects chapter markers by long-polling the news API for topic changes.
 type ChapterTracker struct {
-	news       NewsProvider
-	nowFn      func() time.Time
-	retryDelay time.Duration
+	news          NewsProvider
+	nowFn         func() time.Time
+	showStartHour int // hour (UTC) when the show starts, for stale topic detection
+	retryDelay    time.Duration
 
 	mu       sync.RWMutex
 	chapters []Chapter
 }
 
-// NewChapterTracker creates a new chapter tracker with the given news provider and time function.
-func NewChapterTracker(news NewsProvider, nowFn func() time.Time) *ChapterTracker {
+// NewChapterTracker creates a new chapter tracker with the given news provider, time function
+// and show start hour (UTC). Topics activated before the show start hour are treated as stale.
+func NewChapterTracker(news NewsProvider, nowFn func() time.Time, showStartHour int) *ChapterTracker {
 	return &ChapterTracker{ //nolint:exhaustruct // mu and chapters use zero values
-		news:       news,
-		nowFn:      nowFn,
-		retryDelay: 5 * time.Second,
+		news:          news,
+		nowFn:         nowFn,
+		showStartHour: showStartHour,
+		retryDelay:    5 * time.Second,
 	}
 }
 
@@ -54,6 +57,9 @@ func (ct *ChapterTracker) Run(ctx context.Context) {
 }
 
 // fetchInitialTopic fetches the current active topic and records it as the first chapter.
+// if the topic was activated before the show start (20:00 UTC), it's a leftover and we insert
+// a "Вступление" intro chapter instead. This works correctly on restarts because a topic set
+// during the show (e.g. at 20:15) will have ActiveTS after 20:00.
 func (ct *ChapterTracker) fetchInitialTopic(ctx context.Context, startTime time.Time) string {
 	id, err := ct.news.FetchActiveID(ctx)
 	if err != nil {
@@ -62,8 +68,43 @@ func (ct *ChapterTracker) fetchInitialTopic(ctx context.Context, startTime time.
 		}
 		return ""
 	}
-	ct.fetchAndAddChapter(ctx, id, startTime, startTime)
+
+	article, err := ct.news.FetchArticle(ctx, id)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("failed to fetch initial article", "id", id, "error", err)
+		}
+		return id
+	}
+
+	ct.mu.Lock()
+	if ct.isStaleTopicForShow(article.ActiveTS, startTime) {
+		ct.chapters = append(ct.chapters, Chapter{Title: "Вступление", Link: "", Offset: 0})
+		slog.Info("initial topic predates show, added intro chapter",
+			"active_since", article.ActiveTS.Format(time.RFC3339),
+			"recording_start", startTime.Format(time.RFC3339))
+	} else {
+		ct.chapters = append(ct.chapters, Chapter{
+			Title:  article.Title,
+			Link:   article.Link,
+			Offset: 0,
+		})
+	}
+	ct.mu.Unlock()
 	return id
+}
+
+// isStaleTopicForShow checks if a topic was activated before the show started.
+// the show starts at showStartHour UTC on the same day as the recording.
+// returns true if the topic predates the show start, meaning it's a leftover.
+func (ct *ChapterTracker) isStaleTopicForShow(activeTS, recordingStart time.Time) bool {
+	if activeTS.IsZero() {
+		return false // no timestamp available, assume topic is current
+	}
+	showStart := time.Date(
+		recordingStart.Year(), recordingStart.Month(), recordingStart.Day(),
+		ct.showStartHour, 0, 0, 0, time.UTC)
+	return activeTS.Before(showStart)
 }
 
 // pollForChanges long-polls the news API for topic changes until ctx is cancelled.
