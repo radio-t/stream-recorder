@@ -15,6 +15,10 @@ FROM umputun/baseimage:app-latest
 # enables automatic changelog generation by tools like Dependabot
 LABEL org.opencontainers.image.source="https://github.com/radio-t/stream-recorder"
 
+# ffmpeg is used post-recording to add a Xing/Info VBR header to the MP3 so
+# players show the correct duration; the recorder still works without it.
+RUN apk add --no-cache ffmpeg
+
 COPY --from=build /build/streamrecorder /srv/streamrecorder
 RUN chown -R app:app /srv
 

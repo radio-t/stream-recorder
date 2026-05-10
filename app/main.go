@@ -123,6 +123,7 @@ type runConfig struct {
 	nowFn             func() time.Time
 	newChapterTracker func() chapterProvider                             // nil = chapter tracking disabled
 	injectMetadata    func(string, time.Duration, chapterProvider) error // post-recording metadata injection
+	fixVBRHeader      func(string) error                                 // post-recording VBR header fix
 }
 
 // recordingState holds mutable runtime state for the recording loop.
@@ -140,6 +141,7 @@ func newRunConfig(schedule bool, newsAPI string) runConfig {
 		tickInterval:   5 * time.Second, //nolint:mnd
 		nowFn:          time.Now,
 		injectMetadata: defaultInjectMetadata,
+		fixVBRHeader:   recorder.FixVBRHeader,
 	}
 	if newsAPI != "" {
 		slog.Info("Chapter tracking enabled", slog.String("news_api", newsAPI))
@@ -486,13 +488,18 @@ func logRecordingFinished(msg, episode, filePath string, duration time.Duration)
 	slog.Info(msg, attrs...)
 }
 
-// tryInjectMetadata calls the configured metadata injector if set.
+// tryInjectMetadata calls the configured metadata injector if set, then fixes
+// the VBR header so players show correct duration and seek positions.
 func tryInjectMetadata(cfg runConfig, filePath string, duration time.Duration, tracker chapterProvider) {
-	if cfg.injectMetadata == nil {
-		return
+	if cfg.injectMetadata != nil {
+		if err := cfg.injectMetadata(filePath, duration, tracker); err != nil {
+			slog.Error("failed to inject metadata", slog.String("err", err.Error()))
+		}
 	}
-	if err := cfg.injectMetadata(filePath, duration, tracker); err != nil {
-		slog.Error("failed to inject metadata", slog.String("err", err.Error()))
+	if cfg.fixVBRHeader != nil {
+		if err := cfg.fixVBRHeader(filePath); err != nil {
+			slog.Error("failed to fix VBR header", slog.String("err", err.Error()))
+		}
 	}
 }
 
