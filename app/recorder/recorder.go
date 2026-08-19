@@ -30,9 +30,15 @@ func NewRecorder(dir string, onReady func()) *Recorder {
 	}
 }
 
+// recordingTimeLayout is the timestamp layout used in recording file names.
+const recordingTimeLayout = "2006_01_02_15_04_05"
+
+// recordingExt is the extension used for recording files.
+const recordingExt = ".mp3"
+
 // RecordingFileName returns the full filename for a recording of the given episode at time t.
 func RecordingFileName(episode string, t time.Time) string {
-	return RecordingFilePrefix(episode) + t.Format("2006_01_02_15_04_05") + ".mp3"
+	return RecordingFilePrefix(episode) + t.Format(recordingTimeLayout) + recordingExt
 }
 
 // RecordingFilePrefix returns the filename prefix shared by all recordings of the given episode.
