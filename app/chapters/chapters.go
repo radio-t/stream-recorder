@@ -95,14 +95,18 @@ func (ct *ChapterTracker) fetchInitialTopic(ctx context.Context, startTime time.
 }
 
 // isStaleTopicForShow checks if a topic was activated before the show started.
-// the show starts at showStartHour UTC on the same day as the recording.
+// the show starts at showStartHour UTC on the same UTC day as the recording start.
 // returns true if the topic predates the show start, meaning it's a leftover.
 func (ct *ChapterTracker) isStaleTopicForShow(activeTS, recordingStart time.Time) bool {
 	if activeTS.IsZero() {
 		return false // no timestamp available, assume topic is current
 	}
+	// the show hour is UTC, so the calendar date has to come from the UTC instant too:
+	// in a positive-offset zone a 23:30 UTC start is already the next local day and would
+	// otherwise build tomorrow's show start, marking every valid topic stale
+	startUTC := recordingStart.UTC()
 	showStart := time.Date(
-		recordingStart.Year(), recordingStart.Month(), recordingStart.Day(),
+		startUTC.Year(), startUTC.Month(), startUTC.Day(),
 		ct.showStartHour, 0, 0, 0, time.UTC)
 	return activeTS.Before(showStart)
 }
