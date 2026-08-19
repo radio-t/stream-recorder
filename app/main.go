@@ -488,17 +488,20 @@ func logRecordingFinished(msg, episode, filePath string, duration time.Duration)
 	slog.Info(msg, attrs...)
 }
 
-// tryInjectMetadata calls the configured metadata injector if set, then fixes
-// the VBR header so players show correct duration and seek positions.
+// tryInjectMetadata fixes the VBR header so players show correct duration and seek positions,
+// then calls the configured metadata injector.
+// the order matters: the ffmpeg remux rebuilds the ID3 tag from the stream metadata it
+// understands and drops the WXXX article links out of the chapter frames, so the metadata
+// has to be written after it, not before.
 func tryInjectMetadata(cfg runConfig, filePath string, duration time.Duration, tracker chapterProvider) {
-	if cfg.injectMetadata != nil {
-		if err := cfg.injectMetadata(filePath, duration, tracker); err != nil {
-			slog.Error("failed to inject metadata", slog.String("err", err.Error()))
-		}
-	}
 	if cfg.fixVBRHeader != nil {
 		if err := cfg.fixVBRHeader(filePath); err != nil {
 			slog.Error("failed to fix VBR header", slog.String("err", err.Error()))
+		}
+	}
+	if cfg.injectMetadata != nil {
+		if err := cfg.injectMetadata(filePath, duration, tracker); err != nil {
+			slog.Error("failed to inject metadata", slog.String("err", err.Error()))
 		}
 	}
 }

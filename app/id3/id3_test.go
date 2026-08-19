@@ -111,6 +111,116 @@ func TestInjectFrames(t *testing.T) {
 	assert.Equal(t, int64(9690), ReadTLEN(filePath), "ReadTLEN should return duration in seconds")
 }
 
+func TestInjectFrames_DropsExistingPadding(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "test.mp3")
+
+	// tag padded the way ffmpeg pads the one it writes on remux
+	origFrames := TextFrame("TIT2", "Original")
+	padding := make([]byte, 11)
+	var buf bytes.Buffer
+	require.NoError(t, WriteHeader(&buf, append(append([]byte{}, origFrames...), padding...)))
+	audioData := "fake-audio-data-12345"
+	buf.WriteString(audioData)
+	require.NoError(t, os.WriteFile(filePath, buf.Bytes(), 0o600))
+
+	extraFrames := TextFrame("TLEN", "9690000")
+	require.NoError(t, InjectFrames(filePath, extraFrames))
+
+	data, err := os.ReadFile(filePath) //nolint:gosec // test file
+	require.NoError(t, err)
+
+	newSize := ReadSyncsafe(data[6:10])
+	assert.Equal(t, len(origFrames)+len(extraFrames), newSize, "padding should be dropped, not kept before the new frames")
+	assert.True(t, strings.HasSuffix(string(data), audioData), "audio data should be intact")
+	assert.Contains(t, string(data), "Original")
+	assert.Equal(t, int64(9690), ReadTLEN(filePath), "injected frames must sit before any padding to be readable")
+}
+
+func TestFrameRegionEnd(t *testing.T) {
+	t.Parallel()
+
+	frame := TextFrame("TIT2", "Original")
+
+	tests := []struct {
+		name   string
+		frames []byte
+		want   int
+	}{
+		{name: "empty region", frames: nil, want: 0},
+		{name: "single frame, no padding", frames: frame, want: len(frame)},
+		{name: "frame followed by padding", frames: append(append([]byte{}, frame...), make([]byte, 11)...), want: len(frame)},
+		{name: "padding only", frames: make([]byte, 20), want: 0},
+		{name: "padding shorter than a frame header", frames: append(append([]byte{}, frame...), make([]byte, 4)...), want: len(frame)},
+		{name: "short non-zero tail is kept", frames: append(append([]byte{}, frame...), 1, 2, 3), want: len(frame) + 3},
+		{name: "zero at a frame boundary followed by data keeps the region",
+			frames: append(append([]byte{}, frame...), append([]byte{0}, frame...)...), want: len(frame)*2 + 1},
+		{name: "two frames", frames: append(append([]byte{}, frame...), frame...), want: 2 * len(frame)},
+		{name: "truncated frame keeps the whole region", frames: frame[:len(frame)-2], want: len(frame) - 2},
+		{name: "oversized frame length keeps the whole region", frames: oversizedFrame(), want: len(oversizedFrame())},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, frameRegionEnd(tt.frames))
+		})
+	}
+}
+
+// oversizedFrame builds a frame header claiming more data than the region holds.
+func oversizedFrame() []byte {
+	f := TextFrame("TIT2", "Original")
+	PutSyncsafe(f[4:8], 1000)
+	return f
+}
+
+func TestInjectFrames_KeepsUnsupportedTagLayouts(t *testing.T) {
+	t.Parallel()
+
+	origFrames := TextFrame("TIT2", "Original")
+	padding := make([]byte, 11)
+	extraFrames := TextFrame("TLEN", "9690000")
+
+	tests := []struct {
+		name    string
+		version byte
+		flags   byte
+	}{
+		{name: "id3v2.3 tag", version: 3, flags: 0},
+		{name: "unsynchronised tag", version: 4, flags: 0x80},
+		{name: "extended header", version: 4, flags: 0x40},
+		{name: "tag with footer", version: 4, flags: 0x10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			filePath := filepath.Join(dir, "test.mp3")
+
+			body := append(append([]byte{}, origFrames...), padding...)
+			header := []byte{'I', 'D', '3', tt.version, 0, tt.flags, 0, 0, 0, 0}
+			PutSyncsafe(header[6:10], len(body))
+			var buf bytes.Buffer
+			buf.Write(header)
+			buf.Write(body)
+			buf.WriteString("fake-audio-data-12345")
+			require.NoError(t, os.WriteFile(filePath, buf.Bytes(), 0o600))
+
+			require.NoError(t, InjectFrames(filePath, extraFrames))
+
+			data, err := os.ReadFile(filePath) //nolint:gosec // test file
+			require.NoError(t, err)
+			assert.Equal(t, len(body)+len(extraFrames), ReadSyncsafe(data[6:10]),
+				"a tag layout the scanner does not understand should be copied verbatim")
+			assert.Contains(t, string(data), "Original", "existing frames must be preserved")
+		})
+	}
+}
+
 func TestReadTLEN_NoTLEN(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
