@@ -272,7 +272,7 @@ func (s *Server) checkAuth(r *http.Request) bool {
 	// check form value first (web UI)
 	if pwd := r.PostFormValue("password"); pwd != "" {
 		if err := bcrypt.CompareHashAndPassword([]byte(s.authPasswd), []byte(pwd)); err != nil {
-			slog.Warn("auth failed", slog.String("source", "form"), slog.String("err", err.Error())) //nolint:gosec // error from bcrypt is not user-controlled
+			slog.Warn("auth failed", slog.String("source", "form"), slog.String("err", err.Error()))
 			return false
 		}
 		return true
@@ -281,7 +281,7 @@ func (s *Server) checkAuth(r *http.Request) bool {
 	// check basic auth header (curl/API)
 	if _, pwd, ok := r.BasicAuth(); ok {
 		if err := bcrypt.CompareHashAndPassword([]byte(s.authPasswd), []byte(pwd)); err != nil {
-			slog.Warn("auth failed", slog.String("source", "basic-auth"), slog.String("err", err.Error())) //nolint:gosec // error from bcrypt is not user-controlled
+			slog.Warn("auth failed", slog.String("source", "basic-auth"), slog.String("err", err.Error()))
 			return false
 		}
 		return true
@@ -415,6 +415,7 @@ func (s *Server) DownloadFileHandler(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Has("download") {
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", file))
 	}
+	//nolint:gosec // G703: both segments pass validPathSegment and the result passes isSubPath above
 	http.ServeFile(w, r, filePath)
 }
 

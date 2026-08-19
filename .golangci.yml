@@ -53,6 +53,11 @@ linters:
       disabled-checks:
         - whyNoLint
 
+    goconst:
+      # goconst counts occurrences across the whole package, so a literal repeated in fixtures
+      # can trip a finding located in production code; a path exclusion cannot suppress that
+      ignore-tests: true
+
     gocyclo:
       min-complexity: 10
 
