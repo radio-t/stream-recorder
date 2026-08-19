@@ -40,19 +40,44 @@ jobs:
       env:
         COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: build and push master image
+    - name: build docker image
+      run: |
+        docker build -t stream-recorder:ci \
+          --build-arg GIT_BRANCH="${GIT_BRANCH}" \
+          --build-arg GITHUB_SHA="${GITHUB_SHA}" .
+      env:
+        GIT_BRANCH: ${{ github.head_ref || github.ref_name }}
+
+    - name: verify revision is embedded in the image
+      run: |
+        cid=$(docker run -d stream-recorder:ci --dir /tmp --news "" \
+          --site http://127.0.0.1:1 --stream http://127.0.0.1:1)
+        trap 'docker rm -f "$cid" > /dev/null 2>&1 || true' EXIT
+        logs=""
+        for _ in $(seq 30); do
+          logs=$(docker logs "$cid" 2>&1)
+          case "$logs" in *"Starting stream-recorder"*) break ;; esac
+          sleep 1
+        done
+        echo "$logs"
+        echo "$logs" | grep -q "revision=${GIT_BRANCH}-" || \
+          { echo "revision was not compiled into the binary"; exit 1; }
+      env:
+        GIT_BRANCH: ${{ github.head_ref || github.ref_name }}
+
+    - name: push master image
       if: github.event_name == 'push' && github.ref == 'refs/heads/master'
       run: |
-        docker build -t radiot/stream-recorder:master .
+        docker tag stream-recorder:ci radiot/stream-recorder:master
         docker login --username ${{ secrets.DOCKERHUB_USER }} --password ${{ secrets.DOCKERHUB_PASSWD }}
         docker push radiot/stream-recorder:master
 
-    - name: build and push tagged image
+    - name: push tagged image
       if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
       run: |
         GIT_TAG="${GITHUB_REF#refs/tags/}"
-        docker build -t radiot/stream-recorder:${GIT_TAG} .
+        docker tag stream-recorder:ci "radiot/stream-recorder:${GIT_TAG}"
+        docker tag stream-recorder:ci radiot/stream-recorder:latest
         docker login --username ${{ secrets.DOCKERHUB_USER }} --password ${{ secrets.DOCKERHUB_PASSWD }}
-        docker push radiot/stream-recorder:${GIT_TAG}
-        docker tag radiot/stream-recorder:${GIT_TAG} radiot/stream-recorder:latest
+        docker push "radiot/stream-recorder:${GIT_TAG}"
         docker push radiot/stream-recorder:latest
