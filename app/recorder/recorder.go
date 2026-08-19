@@ -18,11 +18,12 @@ const buffer = 32 * 1024 // 32KB read buffer
 // inside a per-episode subdirectory.
 type Recorder struct {
 	dir     string
-	onReady func() // called after the output file is created, before streaming begins
+	onReady func() // called once the first audio has been written to the output file
 }
 
-// NewRecorder creates a new recorder. onReady, when non-nil, is called after the
-// output file is created but before streaming begins.
+// NewRecorder creates a new recorder. onReady, when non-nil, is called once the first audio has
+// been written to the output file, which is the point where the session becomes a recording:
+// everything before it can still fail without having produced anything.
 func NewRecorder(dir string, onReady func()) *Recorder {
 	return &Recorder{
 		dir:     dir,
@@ -35,6 +36,15 @@ const recordingTimeLayout = "2006_01_02_15_04_05"
 
 // recordingExt is the extension used for recording files.
 const recordingExt = ".mp3"
+
+// notifyReady reports that the session has become a recording: the first audio is on disk, so
+// anything tailing the file has something to read, and a failure up to this point left nothing
+// behind and can be tried again.
+func (r *Recorder) notifyReady() {
+	if r.onReady != nil {
+		r.onReady()
+	}
+}
 
 // RecordingFileName returns the full filename for a recording of the given episode at time t.
 func RecordingFileName(episode string, t time.Time) string {
@@ -82,10 +92,6 @@ func (r *Recorder) Record(ctx context.Context, s *Stream) (string, error) { //no
 	}
 	defer f.Close() //nolint: errcheck
 
-	if r.onReady != nil {
-		r.onReady()
-	}
-
 	// if context was cancelled between the check above and file creation, clean up the empty file
 	if ctx.Err() != nil {
 		os.Remove(f.Name())               //nolint: errcheck,gosec // best-effort cleanup
@@ -112,6 +118,7 @@ func (r *Recorder) Record(ctx context.Context, s *Stream) (string, error) { //no
 	}
 
 	slog.Info(fmt.Sprintf("started recording %s at %v", s.Number, time.Now().Format(time.RFC3339)))
+	var audioWritten bool
 	for {
 		select {
 		case <-ctx.Done():
@@ -125,6 +132,10 @@ func (r *Recorder) Record(ctx context.Context, s *Stream) (string, error) { //no
 		if n > 0 {
 			if _, writeErr := f.Write(buf[:n]); writeErr != nil {
 				return "", fmt.Errorf("failed to write to file: %w", writeErr)
+			}
+			if !audioWritten {
+				audioWritten = true
+				r.notifyReady()
 			}
 		}
 
