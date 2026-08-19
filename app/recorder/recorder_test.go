@@ -2,6 +2,7 @@ package recorder_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -49,25 +50,34 @@ func TestRecorder(t *testing.T) {
 type slowReader struct {
 	ch        chan []byte
 	done      chan struct{}
+	reading   chan struct{} // closed when the first Read starts
+	delivered chan struct{} // closed once a Read has handed over data
 	mu        sync.Mutex
 	closeOnce sync.Once
+	readOnce  sync.Once
+	dataOnce  sync.Once
 	buf       []byte
 }
 
 func newSlowReader() *slowReader {
 	return &slowReader{
-		ch:   make(chan []byte, 10),
-		done: make(chan struct{}),
+		ch:        make(chan []byte, 10),
+		done:      make(chan struct{}),
+		reading:   make(chan struct{}),
+		delivered: make(chan struct{}),
 	}
 }
 
 func (r *slowReader) Read(p []byte) (int, error) {
+	r.readOnce.Do(func() { close(r.reading) })
+
 	// drain buffered data first
 	r.mu.Lock()
 	if len(r.buf) > 0 {
 		n := copy(p, r.buf)
 		r.buf = r.buf[n:]
 		r.mu.Unlock()
+		r.dataOnce.Do(func() { close(r.delivered) })
 		return n, nil
 	}
 	r.mu.Unlock()
@@ -84,6 +94,7 @@ func (r *slowReader) Read(p []byte) (int, error) {
 			r.buf = append(r.buf, data[n:]...)
 			r.mu.Unlock()
 		}
+		r.dataOnce.Do(func() { close(r.delivered) })
 		return n, nil
 	case <-r.done:
 		return 0, io.EOF
@@ -122,8 +133,13 @@ func TestRecorderContextCancellation(t *testing.T) {
 		resCh <- result{fp, err}
 	}()
 
-	// give Record time to read the first chunk
-	time.Sleep(50 * time.Millisecond)
+	// wait until the chunk has actually been handed over: once Read returns it, streamToFile
+	// writes it before checking the context again, so the file is guaranteed to hold audio
+	select {
+	case <-sr.delivered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("recorder did not read the first chunk")
+	}
 
 	// cancel context — Record should stop promptly
 	cancel()
@@ -136,6 +152,104 @@ func TestRecorderContextCancellation(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Record did not stop within 2 seconds after context cancellation")
 	}
+}
+
+func TestRecorderCancellationBeforeAudioRemovesFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	r := recorder.NewRecorder(dir, nil)
+
+	sr := newSlowReader() // never sends anything, so the first read blocks until cancellation
+	s := recorder.NewStream("rt testrecord", sr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	type result struct {
+		filePath string
+		err      error
+	}
+	resCh := make(chan result, 1)
+	go func() {
+		fp, err := r.Record(ctx, s)
+		resCh <- result{fp, err}
+	}()
+
+	// the first read only happens after the ID3 header is written, so waiting for it puts the
+	// cancellation squarely in the window this test is about: file created, header written,
+	// not one audio byte yet
+	episodeDir := filepath.Join(dir, "testrecord")
+	select {
+	case <-sr.reading:
+	case <-time.After(2 * time.Second):
+		t.Fatal("recorder did not reach its first read")
+	}
+	cancel()
+
+	select {
+	case res := <-resCh:
+		require.ErrorIs(t, res.err, context.Canceled)
+		assert.Empty(t, res.filePath, "a header-only file is not a recording and must not be reported")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Record did not stop within 2 seconds after context cancellation")
+	}
+
+	_, statErr := os.Stat(episodeDir)
+	assert.True(t, os.IsNotExist(statErr), "the header-only file and its episode directory should be removed")
+}
+
+// failingReader returns the given data on the first read and then always fails, simulating a
+// stream that drops mid-recording.
+type failingReader struct {
+	data []byte
+	err  error
+	done bool
+}
+
+func (r *failingReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, r.err
+	}
+	r.done = true
+	n := copy(p, r.data)
+	return n, nil
+}
+
+func (r *failingReader) Close() error { return nil }
+
+func TestRecorderStreamFailureKeepsRecordedAudio(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sentinel := errors.New("connection reset")
+
+	r := recorder.NewRecorder(dir, nil)
+	s := recorder.NewStream("rt testrecord", &failingReader{data: []byte("some audio data"), err: sentinel})
+
+	filePath, err := r.Record(context.Background(), s)
+
+	require.ErrorIs(t, err, sentinel)
+	require.NotEmpty(t, filePath, "a recording holding audio should be reported to the caller")
+
+	data, readErr := os.ReadFile(filePath) //nolint:gosec // path from the recorder
+	require.NoError(t, readErr)
+	assert.Equal(t, "ID3", string(data[:3]), "file should start with ID3 header")
+	assert.True(t, strings.HasSuffix(string(data), "some audio data"), "captured audio should be kept")
+}
+
+func TestRecorderStreamFailureBeforeAudioRemovesFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sentinel := errors.New("connection reset")
+
+	r := recorder.NewRecorder(dir, nil)
+	s := recorder.NewStream("rt testrecord", &failingReader{data: nil, err: sentinel, done: true})
+
+	filePath, err := r.Record(context.Background(), s)
+
+	require.ErrorIs(t, err, sentinel)
+	assert.Empty(t, filePath, "a recording without audio should not be reported as a file")
+
+	_, statErr := os.Stat(filepath.Join(dir, "testrecord"))
+	assert.True(t, os.IsNotExist(statErr), "empty episode directory should be removed")
 }
 
 func TestRecordingFileName(t *testing.T) {
