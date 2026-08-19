@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -329,6 +332,16 @@ func TestDownloadEpisodeHandler(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			// distinct historical mtimes, so an entry stamped with time.Now or with another
+			// entry's time fails the comparison below. read before the request, so the entries
+			// can be checked without joining an archive-supplied name into a path
+			wantMod := make(map[string]time.Time, len(tc.expectedFiles))
+			for i, name := range tc.expectedFiles {
+				stamp := time.Date(2019, 3, 14+i, 9, 26, 0, 0, time.UTC)
+				require.NoError(t, os.Chtimes(filepath.Join(dir, tc.episode, name), stamp, stamp))
+				wantMod[name] = stamp
+			}
+
 			req := newRequest(t, "/episode/"+tc.episode)
 			rec := serveHTTP(srv, req)
 
@@ -348,6 +361,10 @@ func TestDownloadEpisodeHandler(t *testing.T) {
 			fileNames := make([]string, 0, len(zipReader.File))
 			for _, f := range zipReader.File {
 				fileNames = append(fileNames, f.Name)
+				assert.Equal(t, zip.Deflate, f.Method, "entries carry a data descriptor, which streaming readers accept only for deflate")
+				require.Contains(t, wantMod, f.Name)
+				assert.WithinDuration(t, wantMod[f.Name], f.Modified, 2*time.Second,
+					"entries should carry the source file's modification time, not the DOS epoch")
 
 				// verify file content matches what we wrote
 				rc, err := f.Open()
@@ -386,6 +403,99 @@ func TestDownloadEpisodeHandler(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
+}
+
+// failingWriter fails every write, standing in for a client that disconnects mid-download.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errWriteFailed }
+
+var errWriteFailed = errors.New("write failed")
+
+func TestZipDir_ReportsWriteFailure(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	// random, so it does not compress down into the zip writer's buffer and the copy actually
+	// reaches the failing writer
+	payload := make([]byte, 64*1024)
+	_, err := rand.Read(payload)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rt999_2025-01-01.mp3"), payload, 0o600))
+
+	err = zipDir(newEpisodeArchive(failingWriter{}), dir)
+	require.Error(t, err, "a failed write must be reported instead of producing a short archive")
+	require.ErrorIs(t, err, errWriteFailed)
+	assert.Contains(t, err.Error(), "copy rt999_2025-01-01.mp3",
+		"the failure should come from copying the file, not from creating the entry")
+}
+
+func TestZipDir_ReportsUnreadableDir(t *testing.T) {
+	t.Parallel()
+
+	err := zipDir(newEpisodeArchive(io.Discard), filepath.Join(t.TempDir(), "missing"))
+	require.Error(t, err)
+}
+
+func TestDownloadEpisodeHandler_UnreadableDirReturns500(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+
+	dir := t.TempDir()
+	epDir := filepath.Join(dir, "999")
+	require.NoError(t, os.Mkdir(epDir, 0o750))
+	require.NoError(t, os.Chmod(epDir, 0o000))
+	// restored so the temp dir can be removed: an empty directory still needs the execute bit
+	t.Cleanup(func() { _ = os.Chmod(epDir, 0o700) }) //nolint:gosec // needs traverse permission to be deleted
+
+	rec := serveHTTP(newTestServer(t, dir), newRequest(t, "/episode/999"))
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code, "a failure before any output should not send 200")
+	assert.Empty(t, rec.Header().Get("Content-Disposition"), "no attachment header on an error response")
+}
+
+// vanishingWriter removes a file from the episode directory the first time the handler writes,
+// so the next entry fails to open after the response has already been committed.
+type vanishingWriter struct {
+	http.ResponseWriter
+	remove string
+	once   sync.Once
+}
+
+func (w *vanishingWriter) Write(b []byte) (int, error) {
+	w.once.Do(func() { _ = os.Remove(w.remove) })
+	return w.ResponseWriter.Write(b) //nolint:wrapcheck // transparent pass-through
+}
+
+func TestDownloadEpisodeHandler_AbandonsArchiveOnFailure(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	epDir := filepath.Join(dir, "999")
+	require.NoError(t, os.Mkdir(epDir, 0o750))
+	payload := make([]byte, 64*1024)
+	_, err := rand.Read(payload)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(epDir, "rt999_2025-01-01.mp3"), payload, 0o600))
+	second := filepath.Join(epDir, "rt999_2025-01-02.mp3")
+	require.NoError(t, os.WriteFile(second, payload, 0o600))
+
+	srv := newTestServer(t, dir)
+	req := newRequest(t, "/episode/999")
+	req.SetPathValue("folder", "999")
+	rec := httptest.NewRecorder()
+
+	srv.DownloadEpisodeHandler(&vanishingWriter{ResponseWriter: rec, remove: second}, req)
+
+	// the failure lands after the first entry is on the wire, so the 200 is already committed
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.NotEmpty(t, rec.Body.Bytes(), "the first entry should have reached the client")
+
+	// the archive is abandoned without a central directory, so it cannot be opened as a zip.
+	// closing the writer here instead would hand over a valid archive missing the second file
+	_, err = zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	require.Error(t, err, "an abandoned archive must not read as a valid zip")
 }
 
 func TestForceRecordHandler(t *testing.T) {
