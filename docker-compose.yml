@@ -3,6 +3,10 @@ services:
     build: .
     container_name: streamrecorder
 
+    # post-recording processing runs after the stop signal and is bounded at 5m, so give the
+    # container long enough to finish it instead of being killed after Compose's default 10s
+    stop_grace_period: 6m
+
     ports:
     - 8080:8080
 

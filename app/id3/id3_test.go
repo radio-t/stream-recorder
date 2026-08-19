@@ -2,6 +2,7 @@ package id3
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -251,4 +252,32 @@ func TestFindTLEN_Empty(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, int64(0), findTLEN(nil))
 	assert.Equal(t, int64(0), findTLEN([]byte{}))
+}
+
+func TestInjectFramesContext_Cancelled(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "test.mp3")
+
+	var buf bytes.Buffer
+	origFrames := TextFrame("TIT2", "Original")
+	require.NoError(t, WriteHeader(&buf, origFrames))
+	buf.WriteString("fake-audio-data-12345")
+	original := buf.Bytes()
+	require.NoError(t, os.WriteFile(filePath, original, 0o600))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := InjectFramesContext(ctx, filePath, TextFrame("TLEN", "9690000"))
+
+	require.ErrorIs(t, err, context.Canceled)
+
+	got, readErr := os.ReadFile(filePath) //nolint:gosec // test file
+	require.NoError(t, readErr)
+	assert.Equal(t, original, got, "the original file must be left untouched")
+
+	entries, readErr := os.ReadDir(dir)
+	require.NoError(t, readErr)
+	assert.Len(t, entries, 1, "the temporary file should be removed")
 }
