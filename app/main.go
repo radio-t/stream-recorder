@@ -460,27 +460,46 @@ func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream
 	if err != nil {
 		if ctx.Err() != nil {
 			logRecordingFinished("recording stopped", stream.Number, filePath, duration)
-			if filePath != "" {
-				tryInjectMetadata(cfg, filePath, duration, tracker)
-			}
+			finaliseRecording(cfg, filePath, duration, tracker)
 			return stopLoop // clean shutdown
 		}
-		slog.Error("error while recording", slog.String("err", err.Error()))
-		if strings.Contains(err.Error(), "failed to read from stream") {
-			slog.Info("stream lost, waiting for reconnect", slog.String("episode", stream.Number))
-		}
+		logRecordingFailure(err, stream.Number, filePath, duration)
+		finaliseRecording(cfg, filePath, duration, tracker)
 		return continueLoop
 	}
 
 	logRecordingFinished("finished recording", stream.Number, filePath, duration)
-	tryInjectMetadata(cfg, filePath, duration, tracker)
+	finaliseRecording(cfg, filePath, duration, tracker)
 	return continueLoop
 }
 
-// logRecordingFinished logs a recording completion message with duration and file size.
+// logRecordingFailure reports a recording that ended in an error, naming the partial file when
+// the recorder left one behind.
+func logRecordingFailure(err error, episode, filePath string, duration time.Duration) {
+	slog.Error("error while recording", slog.String("err", err.Error()))
+	if strings.Contains(err.Error(), "failed to read from stream") {
+		slog.Info("stream lost, waiting for reconnect", slog.String("episode", episode))
+	}
+	if filePath != "" {
+		logRecordingFinished("recording interrupted", episode, filePath, duration)
+	}
+}
+
+// finaliseRecording writes the post-recording metadata for a file the recorder produced.
+// a failed session that left nothing usable on disk reports no path and needs no finalising.
+func finaliseRecording(cfg runConfig, filePath string, duration time.Duration, tracker chapterProvider) {
+	if filePath == "" {
+		return
+	}
+	tryInjectMetadata(cfg, filePath, duration, tracker)
+}
+
+// logRecordingFinished logs a recording completion message with the file, duration and size.
+// naming the file matters for an interrupted session, whose output is otherwise unidentified.
 func logRecordingFinished(msg, episode, filePath string, duration time.Duration) {
 	attrs := []any{slog.String("episode", episode), slog.String("duration", fmtDuration(duration))}
 	if filePath != "" {
+		attrs = append(attrs, slog.String("file", filePath))
 		if fi, err := os.Stat(filePath); err == nil {
 			attrs = append(attrs, slog.String("size", fmtBytes(fi.Size())))
 		}
