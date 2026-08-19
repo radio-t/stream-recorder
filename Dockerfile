@@ -6,9 +6,11 @@ ARG GITHUB_SHA
 ADD . /build
 WORKDIR /build
 
-RUN version=${GIT_BRANCH}-${GITHUB_SHA:0:7}-$(date +%Y%m%dT%H:%M:%S)
-RUN echo "version=$version"
-RUN cd app && go build -o /build/streamrecorder -ldflags "-X main.revision=${version} -s -w"
+# one RUN: a shell variable does not survive into the next layer, so computing the version
+# separately from the build leaves the linker flag empty
+RUN version="${GIT_BRANCH}-$(echo "${GITHUB_SHA}" | cut -c1-7)-$(date +%Y%m%dT%H:%M:%S)" && \
+    echo "version=${version}" && \
+    cd app && go build -o /build/streamrecorder -ldflags "-X main.revision=${version} -s -w"
 
 FROM umputun/baseimage:app-latest
 
