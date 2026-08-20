@@ -97,12 +97,21 @@ func (ct *ChapterTracker) isStaleTopicForShow(activeTS, recordingStart time.Time
 	return activeTS.Before(showStart)
 }
 
+// pendingTopic is a topic whose article could not be fetched, remembered so a later poll can
+// retry it at the offset where it was first seen.
+type pendingTopic struct {
+	id      string
+	offset  time.Duration
+	initial bool // the topic was the one active when recording started
+}
+
 // pollForChanges long-polls the news API for topic changes until ctx is cancelled.
 // a topic whose article could not be fetched stays pending: activeID is left untouched so the
 // next poll reporting the same id retries it, keeping the offset of the first observation.
+// a pending topic that is superseded before that gets one last fetch on the way out, so a
+// transient failure costs a chapter only when the article stays unreachable.
 func (ct *ChapterTracker) pollForChanges(ctx context.Context, startTime time.Time, activeID, pendingID string) {
-	var pendingOffset time.Duration
-	pendingIsInitial := pendingID != ""
+	pending := pendingTopic{id: pendingID, offset: 0, initial: pendingID != ""}
 
 	for {
 		newID, err := ct.news.WaitActiveChange(ctx, 30*time.Second)
@@ -119,13 +128,10 @@ func (ct *ChapterTracker) pollForChanges(ctx context.Context, startTime time.Tim
 			}
 		}
 
-		offset, initial := ct.nowFn().Sub(startTime), false
-		if newID == pendingID {
-			offset, initial = pendingOffset, pendingIsInitial
+		offset, initial, recovered := ct.settlePending(ctx, startTime, &pending, newID, activeID)
+		if recovered != "" {
+			activeID = recovered // the recovered topic is now the last one with a chapter
 		}
-		// any other id ends the pending topic's activation, so if it comes back later
-		// it starts a fresh chapter instead of reusing the offset of the failed attempt
-		pendingID, pendingOffset, pendingIsInitial = "", 0, false
 
 		if newID == activeID {
 			continue
@@ -135,8 +141,32 @@ func (ct *ChapterTracker) pollForChanges(ctx context.Context, startTime time.Tim
 			activeID = newID
 			continue
 		}
-		pendingID, pendingOffset, pendingIsInitial = newID, offset, initial
+		pending = pendingTopic{id: newID, offset: offset, initial: initial}
 	}
+}
+
+// settlePending clears whatever topic was left pending and returns the offset and initial flag
+// the incoming topic should be recorded with. a poll reporting the pending topic again is a
+// retry, so it keeps the offset of the first observation. a poll reporting a different topic
+// ends the pending one's span, and if the recorder is genuinely moving on rather than returning
+// to the topic it already has, the pending article gets one last fetch: it is still addressable
+// by id, and its offset is earlier than the incoming topic's, so recording it here keeps the
+// chapters in ascending order, and its id is returned so the caller can track it as the topic
+// the last chapter belongs to. when the previous topic simply comes back there is no chapter
+// marking its return, so recording the blip would stretch it across the rest of that span.
+func (ct *ChapterTracker) settlePending(ctx context.Context, startTime time.Time,
+	pending *pendingTopic, newID, activeID string) (offset time.Duration, initial bool, recovered string) {
+	offset, initial = ct.nowFn().Sub(startTime), false
+	switch {
+	case newID == pending.id:
+		offset, initial = pending.offset, pending.initial
+	case pending.id != "" && newID != activeID:
+		if ct.fetchAndAddChapter(ctx, pending.id, startTime, pending.offset, pending.initial) {
+			recovered = pending.id
+		}
+	}
+	*pending = pendingTopic{id: "", offset: 0, initial: false}
+	return offset, initial, recovered
 }
 
 // Chapters returns the collected chapter markers (thread-safe).
