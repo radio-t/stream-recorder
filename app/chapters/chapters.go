@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// introChapterTitle is used in place of a topic that was already active before the show started.
+const introChapterTitle = "Вступление"
+
 // Chapter represents a single chapter marker with its title, link, and offset from recording start.
 type Chapter struct {
 	Title  string
@@ -49,49 +52,32 @@ func NewChapterTracker(news NewsProvider, nowFn func() time.Time, showStartHour 
 // Run starts tracking topic changes. It blocks until ctx is cancelled.
 func (ct *ChapterTracker) Run(ctx context.Context) {
 	startTime := ct.nowFn()
-	activeID := ct.fetchInitialTopic(ctx, startTime)
+	activeID, pendingID := ct.fetchInitialTopic(ctx, startTime)
 	if ctx.Err() != nil {
 		return
 	}
-	ct.pollForChanges(ctx, startTime, activeID)
+	ct.pollForChanges(ctx, startTime, activeID, pendingID)
 }
 
 // fetchInitialTopic fetches the current active topic and records it as the first chapter.
 // if the topic was activated before the show start (20:00 UTC), it's a leftover and we insert
 // a "Вступление" intro chapter instead. This works correctly on restarts because a topic set
 // during the show (e.g. at 20:15) will have ActiveTS after 20:00.
-func (ct *ChapterTracker) fetchInitialTopic(ctx context.Context, startTime time.Time) string {
+// returns the id of the recorded topic, or an empty id plus the pending one when the article
+// fetch failed, so the topic can still be picked up by a later poll.
+func (ct *ChapterTracker) fetchInitialTopic(ctx context.Context, startTime time.Time) (activeID, pendingID string) {
 	id, err := ct.news.FetchActiveID(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
 			slog.Warn("failed to fetch initial active topic", "error", err)
 		}
-		return ""
+		return "", ""
 	}
 
-	article, err := ct.news.FetchArticle(ctx, id)
-	if err != nil {
-		if ctx.Err() == nil {
-			slog.Warn("failed to fetch initial article", "id", id, "error", err)
-		}
-		return id
+	if !ct.fetchAndAddChapter(ctx, id, startTime, 0, true) {
+		return "", id
 	}
-
-	ct.mu.Lock()
-	if ct.isStaleTopicForShow(article.ActiveTS, startTime) {
-		ct.chapters = append(ct.chapters, Chapter{Title: "Вступление", Link: "", Offset: 0})
-		slog.Info("initial topic predates show, added intro chapter",
-			"active_since", article.ActiveTS.Format(time.RFC3339),
-			"recording_start", startTime.Format(time.RFC3339))
-	} else {
-		ct.chapters = append(ct.chapters, Chapter{
-			Title:  article.Title,
-			Link:   article.Link,
-			Offset: 0,
-		})
-	}
-	ct.mu.Unlock()
-	return id
+	return id, ""
 }
 
 // isStaleTopicForShow checks if a topic was activated before the show started.
@@ -112,7 +98,12 @@ func (ct *ChapterTracker) isStaleTopicForShow(activeTS, recordingStart time.Time
 }
 
 // pollForChanges long-polls the news API for topic changes until ctx is cancelled.
-func (ct *ChapterTracker) pollForChanges(ctx context.Context, startTime time.Time, activeID string) {
+// a topic whose article could not be fetched stays pending: activeID is left untouched so the
+// next poll reporting the same id retries it, keeping the offset of the first observation.
+func (ct *ChapterTracker) pollForChanges(ctx context.Context, startTime time.Time, activeID, pendingID string) {
+	var pendingOffset time.Duration
+	pendingIsInitial := pendingID != ""
+
 	for {
 		newID, err := ct.news.WaitActiveChange(ctx, 30*time.Second)
 		if err != nil {
@@ -128,11 +119,23 @@ func (ct *ChapterTracker) pollForChanges(ctx context.Context, startTime time.Tim
 			}
 		}
 
+		offset, initial := ct.nowFn().Sub(startTime), false
+		if newID == pendingID {
+			offset, initial = pendingOffset, pendingIsInitial
+		}
+		// any other id ends the pending topic's activation, so if it comes back later
+		// it starts a fresh chapter instead of reusing the offset of the failed attempt
+		pendingID, pendingOffset, pendingIsInitial = "", 0, false
+
 		if newID == activeID {
 			continue
 		}
-		activeID = newID
-		ct.fetchAndAddChapter(ctx, newID, startTime, ct.nowFn())
+
+		if ct.fetchAndAddChapter(ctx, newID, startTime, offset, initial) {
+			activeID = newID
+			continue
+		}
+		pendingID, pendingOffset, pendingIsInitial = newID, offset, initial
 	}
 }
 
@@ -145,21 +148,30 @@ func (ct *ChapterTracker) Chapters() []Chapter {
 	return result
 }
 
-// fetchAndAddChapter fetches article details and adds a chapter with the calculated offset.
-func (ct *ChapterTracker) fetchAndAddChapter(ctx context.Context, id string, startTime, now time.Time) {
+// fetchAndAddChapter fetches article details and appends a chapter at the given offset.
+// when initial is set, a topic activated before the show start is replaced with an intro chapter.
+// returns false when the article could not be fetched, leaving the chapter unrecorded so the
+// caller can retry the same id later.
+func (ct *ChapterTracker) fetchAndAddChapter(ctx context.Context, id string, startTime time.Time,
+	offset time.Duration, initial bool) bool {
 	article, err := ct.news.FetchArticle(ctx, id)
 	if err != nil {
 		if ctx.Err() == nil {
 			slog.Warn("failed to fetch article", "id", id, "error", err)
 		}
-		return
+		return false
+	}
+
+	chapter := Chapter{Title: article.Title, Link: article.Link, Offset: offset}
+	if initial && ct.isStaleTopicForShow(article.ActiveTS, startTime) {
+		chapter = Chapter{Title: introChapterTitle, Link: "", Offset: offset}
+		slog.Info("initial topic predates show, added intro chapter",
+			"active_since", article.ActiveTS.Format(time.RFC3339),
+			"recording_start", startTime.Format(time.RFC3339))
 	}
 
 	ct.mu.Lock()
-	ct.chapters = append(ct.chapters, Chapter{
-		Title:  article.Title,
-		Link:   article.Link,
-		Offset: now.Sub(startTime),
-	})
+	ct.chapters = append(ct.chapters, chapter)
 	ct.mu.Unlock()
+	return true
 }

@@ -344,10 +344,191 @@ func TestChapterTracker_ArticleFetchError(t *testing.T) {
 	tracker := NewChapterTracker(mock, nowFn, 20)
 	tracker.Run(ctx)
 
-	// should only have the first chapter; second was skipped due to article fetch error
+	// only the first chapter; the second topic stays pending and is never fetched successfully
 	chapters := tracker.Chapters()
 	require.Len(t, chapters, 1)
 	assert.Equal(t, "First", chapters[0].Title)
+}
+
+func TestChapterTracker_RetriesFailedArticleFetch(t *testing.T) {
+	t.Parallel()
+
+	baseTime := time.Date(2026, 3, 28, 20, 30, 0, 0, time.UTC) // during the show
+	var currentTime atomic.Int64
+	currentTime.Store(baseTime.UnixNano())
+	nowFn := func() time.Time { return time.Unix(0, currentTime.Load()) }
+
+	var waitCalls, topic2Calls atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+
+	mock := &NewsProviderMock{
+		FetchActiveIDFunc: func(_ context.Context) (string, error) {
+			return testTopic1, nil
+		},
+		FetchArticleFunc: func(_ context.Context, id string) (Article, error) {
+			switch id {
+			case testTopic1:
+				return Article{Title: "First Topic", Link: "https://example.com/1", ActiveTS: baseTime}, nil
+			case testTopic2:
+				if topic2Calls.Add(1) == 1 {
+					return Article{}, fmt.Errorf("article fetch failed")
+				}
+				return Article{Title: "Second Topic", Link: "https://example.com/2",
+					ActiveTS: baseTime.Add(10 * time.Minute)}, nil
+			default:
+				return Article{}, fmt.Errorf("unknown article %s", id)
+			}
+		},
+		WaitActiveChangeFunc: func(_ context.Context, _ time.Duration) (string, error) {
+			switch waitCalls.Add(1) {
+			case 1: // topic changes, its article fetch fails
+				currentTime.Store(baseTime.Add(10 * time.Minute).UnixNano())
+				return testTopic2, nil
+			case 2: // same topic reported again, article fetch succeeds this time
+				currentTime.Store(baseTime.Add(25 * time.Minute).UnixNano())
+				return testTopic2, nil
+			default:
+				cancel()
+				return "", ctx.Err()
+			}
+		},
+	}
+
+	tracker := NewChapterTracker(mock, nowFn, 20)
+	tracker.Run(ctx)
+
+	chapters := tracker.Chapters()
+	require.Len(t, chapters, 2, "the retried topic should be recorded")
+	assert.Equal(t, "First Topic", chapters[0].Title)
+	assert.Equal(t, "Second Topic", chapters[1].Title)
+	assert.Equal(t, "https://example.com/2", chapters[1].Link)
+	assert.Equal(t, 10*time.Minute, chapters[1].Offset, "offset should be the first observation, not the retry")
+}
+
+func TestChapterTracker_PendingTopicResetByAnotherTopic(t *testing.T) {
+	t.Parallel()
+
+	baseTime := time.Date(2026, 3, 28, 20, 30, 0, 0, time.UTC) // during the show
+	var currentTime atomic.Int64
+	currentTime.Store(baseTime.UnixNano())
+	nowFn := func() time.Time { return time.Unix(0, currentTime.Load()) }
+
+	var waitCalls, topic2Calls atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+
+	mock := &NewsProviderMock{
+		FetchActiveIDFunc: func(_ context.Context) (string, error) {
+			return testTopic1, nil
+		},
+		FetchArticleFunc: func(_ context.Context, id string) (Article, error) {
+			switch id {
+			case testTopic1:
+				return Article{Title: "First Topic", Link: "https://example.com/1", ActiveTS: baseTime}, nil
+			case testTopic2:
+				if topic2Calls.Add(1) == 1 {
+					return Article{}, fmt.Errorf("article fetch failed")
+				}
+				return Article{Title: "Second Topic", Link: "https://example.com/2",
+					ActiveTS: baseTime.Add(40 * time.Minute)}, nil
+			default:
+				return Article{}, fmt.Errorf("unknown article %s", id)
+			}
+		},
+		WaitActiveChangeFunc: func(_ context.Context, _ time.Duration) (string, error) {
+			switch waitCalls.Add(1) {
+			case 1: // topic 2 becomes active, its article fetch fails
+				currentTime.Store(baseTime.Add(10 * time.Minute).UnixNano())
+				return testTopic2, nil
+			case 2: // topic 1 is active again, ending topic 2's activation
+				currentTime.Store(baseTime.Add(12 * time.Minute).UnixNano())
+				return testTopic1, nil
+			case 3: // topic 2 activated afresh, article fetch succeeds
+				currentTime.Store(baseTime.Add(40 * time.Minute).UnixNano())
+				return testTopic2, nil
+			default:
+				cancel()
+				return "", ctx.Err()
+			}
+		},
+	}
+
+	tracker := NewChapterTracker(mock, nowFn, 20)
+	tracker.Run(ctx)
+
+	chapters := tracker.Chapters()
+	require.Len(t, chapters, 2)
+	assert.Equal(t, "Second Topic", chapters[1].Title)
+	assert.Equal(t, 40*time.Minute, chapters[1].Offset,
+		"a re-activated topic should use its new offset, not the one from the failed attempt")
+}
+
+func TestChapterTracker_RetriesFailedInitialArticleFetch(t *testing.T) {
+	t.Parallel()
+
+	baseTime := time.Date(2026, 3, 28, 20, 30, 0, 0, time.UTC) // during the show
+	showStart := time.Date(2026, 3, 28, 20, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name      string
+		activeTS  time.Time
+		wantTitle string
+		wantLink  string
+	}{
+		{
+			name:      "topic activated during the show",
+			activeTS:  showStart.Add(15 * time.Minute),
+			wantTitle: "First Topic",
+			wantLink:  "https://example.com/1",
+		},
+		{
+			name:      "topic predating the show still becomes the intro chapter",
+			activeTS:  showStart.Add(-time.Hour),
+			wantTitle: introChapterTitle,
+			wantLink:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var currentTime atomic.Int64
+			currentTime.Store(baseTime.UnixNano())
+			nowFn := func() time.Time { return time.Unix(0, currentTime.Load()) }
+
+			var waitCalls, articleCalls atomic.Int32
+			ctx, cancel := context.WithCancel(context.Background())
+
+			mock := &NewsProviderMock{
+				FetchActiveIDFunc: func(_ context.Context) (string, error) {
+					return testTopic1, nil
+				},
+				FetchArticleFunc: func(_ context.Context, _ string) (Article, error) {
+					if articleCalls.Add(1) == 1 {
+						return Article{}, fmt.Errorf("article fetch failed")
+					}
+					return Article{Title: "First Topic", Link: "https://example.com/1", ActiveTS: tt.activeTS}, nil
+				},
+				WaitActiveChangeFunc: func(_ context.Context, _ time.Duration) (string, error) {
+					if waitCalls.Add(1) == 1 { // same topic still active, retry succeeds
+						currentTime.Store(baseTime.Add(5 * time.Minute).UnixNano())
+						return testTopic1, nil
+					}
+					cancel()
+					return "", ctx.Err()
+				},
+			}
+
+			tracker := NewChapterTracker(mock, nowFn, 20)
+			tracker.Run(ctx)
+
+			chapters := tracker.Chapters()
+			require.Len(t, chapters, 1, "the initial topic should be recovered on retry")
+			assert.Equal(t, tt.wantTitle, chapters[0].Title)
+			assert.Equal(t, tt.wantLink, chapters[0].Link)
+			assert.Equal(t, time.Duration(0), chapters[0].Offset, "recovered initial topic starts at the recording start")
+		})
+	}
 }
 
 func TestChapterTracker_ChaptersThreadSafe(t *testing.T) {
