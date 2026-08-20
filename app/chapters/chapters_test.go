@@ -378,3 +378,71 @@ func TestChapterTracker_ChaptersThreadSafe(t *testing.T) {
 	chapters := tracker.Chapters()
 	assert.Len(t, chapters, 100)
 }
+
+func TestChapterTracker_IsStaleTopicForShow(t *testing.T) {
+	t.Parallel()
+
+	// zones the recorder may run in when TZ is not forced to UTC
+	bst := time.FixedZone("BST", 1*60*60)
+	msk := time.FixedZone("MSK", 3*60*60)
+
+	showStart := time.Date(2026, 3, 28, 20, 0, 0, 0, time.UTC) // Saturday 20:00 UTC
+
+	tests := []struct {
+		name           string
+		activeTS       time.Time
+		recordingStart time.Time
+		want           bool
+	}{
+		{
+			name:           "zero timestamp is never stale",
+			activeTS:       time.Time{},
+			recordingStart: showStart.Add(30 * time.Minute),
+			want:           false,
+		},
+		{
+			name:           "activated an hour before the show",
+			activeTS:       showStart.Add(-time.Hour),
+			recordingStart: showStart.Add(30 * time.Minute),
+			want:           true,
+		},
+		{
+			name:           "activated during the show",
+			activeTS:       showStart.Add(15 * time.Minute),
+			recordingStart: showStart.Add(30 * time.Minute),
+			want:           false,
+		},
+		{
+			name:           "activated exactly at the show start",
+			activeTS:       showStart,
+			recordingStart: showStart.Add(30 * time.Minute),
+			want:           false,
+		},
+		{
+			name:           "late recording start, already next day in a +1 zone",
+			activeTS:       showStart.Add(15 * time.Minute),
+			recordingStart: showStart.Add(3*time.Hour + 30*time.Minute).In(bst), // Sun 00:30 BST
+			want:           false,
+		},
+		{
+			name:           "late recording start, already next day in a +3 zone",
+			activeTS:       showStart.Add(15 * time.Minute),
+			recordingStart: showStart.Add(3*time.Hour + 30*time.Minute).In(msk), // Sun 02:30 MSK
+			want:           false,
+		},
+		{
+			name:           "stale topic still detected in a +3 zone past local midnight",
+			activeTS:       showStart.Add(-time.Hour),
+			recordingStart: showStart.Add(3*time.Hour + 30*time.Minute).In(msk),
+			want:           true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tracker := NewChapterTracker(nil, time.Now, 20)
+			assert.Equal(t, tt.want, tracker.isStaleTopicForShow(tt.activeTS, tt.recordingStart))
+		})
+	}
+}
