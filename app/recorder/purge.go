@@ -90,7 +90,18 @@ func purgeFile(dir string, f os.DirEntry, cutoff time.Time) {
 	slog.Info("purged old recording", slog.String("file", path))
 }
 
-// isRecorderFile checks that a filename matches the recorder naming pattern: rt<episode>_<timestamp>.mp3
+// isRecorderFile checks that a filename is one RecordingFileName would produce for this episode:
+// the exact rt<episode>_<timestamp>.mp3 shape, with the timestamp in recordingTimeLayout.
+// anything else in the directory, including an unrelated mp3 sharing the prefix, is left alone.
 func isRecorderFile(name, prefix string) bool {
-	return strings.HasPrefix(name, prefix) && strings.HasSuffix(strings.ToLower(name), ".mp3")
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, recordingExt) {
+		return false
+	}
+	stamp := name[len(prefix) : len(name)-len(recordingExt)]
+	t, err := time.Parse(recordingTimeLayout, stamp)
+	if err != nil {
+		return false
+	}
+	// round-trip so only the canonical rendering of a timestamp matches
+	return t.Format(recordingTimeLayout) == stamp
 }
