@@ -47,7 +47,7 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(json.dumps([{"title": "Podcast 999"}]).encode())
+        self.wfile.write(json.dumps([{"title": "Podcast 998"}]).encode())
     def log_message(self, *a): pass
 http.server.HTTPServer(("127.0.0.1", 9999), H).serve_forever()
 ' &
@@ -59,7 +59,7 @@ http.server.HTTPServer(("127.0.0.1", 9999), H).serve_forever()
   --dir ./records --port 8080 --dbg
 ```
 
-The mock API returns `[{"title": "Podcast 999"}]`, so recordings appear under `records/999/`. Open http://localhost:8080 to see the web UI.
+The mock API returns `[{"title": "Podcast 998"}]`, so recordings appear under `records/999/`. The site API reports the *last published* episode, while the recorder always captures the *next* one, so `getStreamNumber` increments the parsed number by one and the directory is one higher than the title. Open http://localhost:8080 to see the web UI.
 
 Some public Icecast streams suitable for testing:
 
