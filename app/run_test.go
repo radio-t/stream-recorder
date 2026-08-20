@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radio-t/stream-recorder/app/chapters"
+	"github.com/radio-t/stream-recorder/app/id3"
 	"github.com/radio-t/stream-recorder/app/recorder"
 )
 
@@ -741,4 +744,68 @@ func TestRun_ChapterTrackingPerRecording(t *testing.T) {
 		"a new chapter tracker should be created for each recording")
 	assert.GreaterOrEqual(t, recordCount.Load(), int32(2),
 		"should have recorded at least twice in 100ms with 10ms tick")
+}
+
+func TestTryInjectMetadata_PostProcessingKeepsChapterLinks(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+
+	const articleLink = "https://radio-t.com/p/2026/03/28/podcast999/"
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rt999_2026_03_28_20_00_00.mp3")
+	require.NoError(t, writeTestRecording(t, filePath))
+
+	tracker := &mockChapterProvider{
+		runCalled: make(chan struct{}),
+		chapters: []chapters.Chapter{
+			{Title: "Вступление", Link: "", Offset: 0},
+			{Title: "Second Topic", Link: articleLink, Offset: time.Second},
+		},
+	}
+	cfg := runConfig{
+		injectMetadata: func(fp string, d time.Duration, tp chapterProvider) error {
+			return injectPostRecordingMetadata(fp, d, tp, chapters.BuildChapterFrames)
+		},
+		fixVBRHeader: recorder.FixVBRHeader,
+	}
+
+	tryInjectMetadata(cfg, filePath, 2*time.Second, tracker)
+
+	data, err := os.ReadFile(filePath) //nolint:gosec // test file
+	require.NoError(t, err)
+
+	assert.Contains(t, string(data), "CHAP", "chapter frames should survive post-processing")
+	assert.Contains(t, string(data), "CTOC", "table of contents should survive post-processing")
+	assert.Contains(t, string(data), "WXXX", "article link frames should survive post-processing")
+	assert.Contains(t, string(data), articleLink, "article URL should survive post-processing")
+	assert.True(t, bytes.Contains(data, []byte("Xing")) || bytes.Contains(data, []byte("Info")),
+		"VBR header should be present")
+	assert.Equal(t, int64(2), id3.ReadTLEN(filePath),
+		"injected frames must be readable, i.e. placed before any padding in the tag")
+}
+
+// writeTestRecording produces a file shaped like a finished recording: the recorder's own
+// ID3v2 header followed by real MP3 audio.
+func writeTestRecording(t *testing.T, path string) error {
+	t.Helper()
+
+	audioPath := filepath.Join(t.TempDir(), "audio.mp3")
+	cmd := exec.Command("ffmpeg", "-y", "-loglevel", "error", //nolint:gosec,noctx // test helper, fixed args
+		"-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "2",
+		"-c:a", "libmp3lame", "-b:a", "128k", audioPath)
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	audio, err := os.ReadFile(audioPath) //nolint:gosec // test file
+	if err != nil {
+		return err
+	}
+
+	var buf bytes.Buffer
+	if err := recorder.WriteID3v2Header(&buf, "999", time.Now()); err != nil {
+		return err
+	}
+	buf.Write(audio)
+	return os.WriteFile(path, buf.Bytes(), 0o600)
 }

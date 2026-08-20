@@ -31,8 +31,18 @@ func WriteHeader(w io.Writer, frames []byte) error {
 	return err
 }
 
+// maxTagInspect caps how much of an existing tag is read into memory to locate its padding.
+// a larger tag is copied verbatim, as it was before padding was taken into account; the files
+// this package writes carry a few kilobytes of frames, so the cap is never reached in practice.
+const maxTagInspect = 1 << 20
+
+// maxSyncsafeTagSize is the largest value a syncsafe tag size can hold.
+const maxSyncsafeTagSize = 1<<28 - 1
+
 // InjectFrames appends extra frames into an existing MP3 file's ID3v2 header.
 // uses a single-pass copy to a temp file, then atomic rename to replace the original.
+// any padding the existing tag ends with is dropped, since the spec places padding after
+// the last frame and parsers stop reading there.
 func InjectFrames(filePath string, extraFrames []byte) error {
 	srcInfo, err := os.Stat(filePath)
 	if err != nil {
@@ -52,10 +62,18 @@ func InjectFrames(filePath string, extraFrames []byte) error {
 	if string(header[0:3]) != "ID3" {
 		return fmt.Errorf("not an ID3v2 file")
 	}
-	oldSize := ReadSyncsafe(header[6:10])
-	PutSyncsafe(header[6:10], oldSize+len(extraFrames))
 
-	tmpPath, err := rewriteFile(filepath.Dir(filePath), header, src, int64(oldSize), extraFrames)
+	existing, copySize, err := readTrimmedFrames(src, header)
+	if err != nil {
+		return err
+	}
+	newSize := len(existing) + int(copySize) + len(extraFrames)
+	if newSize > maxSyncsafeTagSize {
+		return fmt.Errorf("resulting tag of %d bytes exceeds the ID3v2 limit", newSize)
+	}
+	PutSyncsafe(header[6:10], newSize)
+
+	tmpPath, err := rewriteFile(filepath.Dir(filePath), header, existing, src, copySize, extraFrames)
 	if err != nil {
 		return err
 	}
@@ -66,8 +84,52 @@ func InjectFrames(filePath string, extraFrames []byte) error {
 	return os.Rename(tmpPath, filePath)
 }
 
+// readTrimmedFrames reads the existing frame region and returns it without its padding.
+// only a plain ID3v2.4 tag is walked: another major version sizes its frames differently, and
+// an extended header, a footer or unsynchronisation all change the layout the scanner assumes.
+// for those, and for a tag too large to inspect, nothing is read and the number of frame bytes
+// left to copy from src is returned instead, which is what this package did before.
+func readTrimmedFrames(src io.Reader, header []byte) (existing []byte, copySize int64, err error) {
+	size := ReadSyncsafe(header[6:10])
+	if header[3] != 4 || header[5] != 0 || size <= 0 || size > maxTagInspect {
+		return nil, int64(size), nil
+	}
+
+	existing = make([]byte, size)
+	if _, err := io.ReadFull(src, existing); err != nil {
+		return nil, 0, fmt.Errorf("read ID3 frames: %w", err)
+	}
+	return existing[:frameRegionEnd(existing)], 0, nil
+}
+
+// frameRegionEnd returns the length of the actual frames in a tag's frame region, excluding
+// the padding it may end with. a region this code cannot walk is kept whole, so nothing that
+// might still hold data is dropped.
+func frameRegionEnd(frames []byte) int {
+	pos := 0
+	for pos+10 <= len(frames) {
+		if frames[pos] == 0 {
+			break // frame IDs are alphanumeric, so padding may start here
+		}
+		size := ReadSyncsafe(frames[pos+4 : pos+8])
+		if size <= 0 || pos+10+size > len(frames) {
+			return len(frames)
+		}
+		pos += 10 + size
+	}
+	// the remainder is padding only when every byte of it is zero
+	for _, b := range frames[pos:] {
+		if b != 0 {
+			return len(frames)
+		}
+	}
+	return pos
+}
+
 // rewriteFile creates a temp file with: updated header + existing frames + extra frames + audio.
-func rewriteFile(dir string, header []byte, src io.Reader, frameSize int64, extra []byte) (string, error) {
+// existing holds already-read frame bytes, frameSize the number of frame bytes still to copy
+// from src; exactly one of the two is used.
+func rewriteFile(dir string, header, existing []byte, src io.Reader, frameSize int64, extra []byte) (string, error) {
 	tmp, err := os.CreateTemp(dir, "id3-*.tmp")
 	if err != nil {
 		return "", fmt.Errorf("create temp file: %w", err)
@@ -83,6 +145,9 @@ func rewriteFile(dir string, header []byte, src io.Reader, frameSize int64, extr
 
 	if _, err := tmp.Write(header); err != nil {
 		return "", fmt.Errorf("write header: %w", err)
+	}
+	if _, err := tmp.Write(existing); err != nil {
+		return "", fmt.Errorf("write existing frames: %w", err)
 	}
 	if _, err := io.CopyN(tmp, src, frameSize); err != nil {
 		return "", fmt.Errorf("copy existing frames: %w", err)
