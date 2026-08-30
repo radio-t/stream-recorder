@@ -566,6 +566,7 @@ func TestChapterTracker_IsStaleTopicForShow(t *testing.T) {
 	// zones the recorder may run in when TZ is not forced to UTC
 	bst := time.FixedZone("BST", 1*60*60)
 	msk := time.FixedZone("MSK", 3*60*60)
+	cdt := time.FixedZone("CDT", -5*60*60) // the live deployment's zone
 
 	showStart := time.Date(2026, 3, 28, 20, 0, 0, 0, time.UTC) // Saturday 20:00 UTC
 
@@ -609,6 +610,26 @@ func TestChapterTracker_IsStaleTopicForShow(t *testing.T) {
 			name:           "late recording start, already next day in a +3 zone",
 			activeTS:       showStart.Add(15 * time.Minute),
 			recordingStart: showStart.Add(3*time.Hour + 30*time.Minute).In(msk), // Sun 02:30 MSK
+			want:           false,
+		},
+		{
+			// the live deployment runs at UTC-5 and records the show from about 19:56 UTC,
+			// so a session started manually after midnight UTC still belongs to that show
+			name:           "recording started after midnight UTC belongs to the evening's show",
+			activeTS:       showStart.Add(2 * time.Hour),
+			recordingStart: showStart.Add(5*time.Hour + 30*time.Minute).In(cdt), // Sun 01:30 UTC, Sat 20:30 local
+			want:           false,
+		},
+		{
+			name:           "leftover topic is still stale for a recording started after midnight UTC",
+			activeTS:       showStart.Add(-2 * time.Hour),
+			recordingStart: showStart.Add(5*time.Hour + 30*time.Minute).In(cdt),
+			want:           true,
+		},
+		{
+			name:           "recording started long after the show belongs to that show, not the next",
+			activeTS:       showStart.Add(time.Hour),
+			recordingStart: showStart.Add(11 * time.Hour), // Sun 07:00 UTC
 			want:           false,
 		},
 		{
