@@ -63,14 +63,23 @@ func (ct *ChapterTracker) Run(ctx context.Context) {
 // if the topic was activated before the show start (20:00 UTC), it's a leftover and we insert
 // a "Вступление" intro chapter instead. This works correctly on restarts because a topic set
 // during the show (e.g. at 20:15) will have ActiveTS after 20:00.
+// the same intro chapter covers the case where there is no topic to name yet: recording starts
+// before the show, and the news API reports no active topic until the news part begins, which
+// can be an hour in. without a chapter there, players show nothing for the show's opening.
 // returns the id of the recorded topic, or an empty id plus the pending one when the article
 // fetch failed, so the topic can still be picked up by a later poll.
 func (ct *ChapterTracker) fetchInitialTopic(ctx context.Context, startTime time.Time) (activeID, pendingID string) {
 	id, err := ct.news.FetchActiveID(ctx)
-	if err != nil {
-		if ctx.Err() == nil {
-			slog.Warn("failed to fetch initial active topic", "error", err)
-		}
+	switch {
+	case ctx.Err() != nil:
+		return "", ""
+	case err != nil:
+		slog.Warn("failed to fetch initial active topic, opening with intro chapter", "error", err)
+		ct.addIntroChapter()
+		return "", ""
+	case id == "":
+		slog.Info("no active topic at recording start, opening with intro chapter")
+		ct.addIntroChapter()
 		return "", ""
 	}
 
@@ -78,6 +87,18 @@ func (ct *ChapterTracker) fetchInitialTopic(ctx context.Context, startTime time.
 		return "", id
 	}
 	return id, ""
+}
+
+// addIntroChapter records the opening chapter, used when the show has no topic to name yet.
+// it only applies to an empty list, so an offset 0 chapter can never land after a real one and
+// leave BuildChapterFrames with a backwards span.
+func (ct *ChapterTracker) addIntroChapter() {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	if len(ct.chapters) > 0 {
+		return
+	}
+	ct.chapters = append(ct.chapters, Chapter{Title: introChapterTitle, Link: "", Offset: 0})
 }
 
 // isStaleTopicForShow checks if a topic was activated before the show started.
