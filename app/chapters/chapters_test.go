@@ -14,6 +14,7 @@ import (
 const (
 	testTopic1 = "topic1"
 	testTopic2 = "topic2"
+	testTopic3 = "topic3"
 )
 
 func TestChapterTracker_CollectsTopicChanges(t *testing.T) {
@@ -529,6 +530,160 @@ func TestChapterTracker_RetriesFailedInitialArticleFetch(t *testing.T) {
 			assert.Equal(t, time.Duration(0), chapters[0].Offset, "recovered initial topic starts at the recording start")
 		})
 	}
+}
+
+func TestChapterTracker_RecoversSupersededTopic(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		failuresForB int
+		wantTitles   []string
+		wantOffsets  []time.Duration
+	}{
+		{
+			name:         "article becomes reachable again on the way out",
+			failuresForB: 1,
+			wantTitles:   []string{"First Topic", "Second Topic", "Third Topic"},
+			wantOffsets:  []time.Duration{0, 10 * time.Minute, 20 * time.Minute},
+		},
+		{
+			name:         "article stays unreachable",
+			failuresForB: 2,
+			wantTitles:   []string{"First Topic", "Third Topic"},
+			wantOffsets:  []time.Duration{0, 20 * time.Minute},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			baseTime := time.Date(2026, 3, 28, 20, 30, 0, 0, time.UTC)
+			var currentTime atomic.Int64
+			currentTime.Store(baseTime.UnixNano())
+			nowFn := func() time.Time { return time.Unix(0, currentTime.Load()) }
+
+			var waitCalls, topic2Calls atomic.Int32
+			ctx, cancel := context.WithCancel(context.Background())
+
+			mock := &NewsProviderMock{
+				FetchActiveIDFunc: func(_ context.Context) (string, error) {
+					return testTopic1, nil
+				},
+				FetchArticleFunc: func(_ context.Context, id string) (Article, error) {
+					switch id {
+					case testTopic1:
+						return Article{Title: "First Topic", Link: "https://example.com/1", ActiveTS: baseTime}, nil
+					case testTopic2:
+						if int(topic2Calls.Add(1)) <= tt.failuresForB {
+							return Article{}, fmt.Errorf("news API returned status 502 for article %s", id)
+						}
+						return Article{Title: "Second Topic", Link: "https://example.com/2",
+							ActiveTS: baseTime.Add(10 * time.Minute)}, nil
+					case testTopic3:
+						return Article{Title: "Third Topic", Link: "https://example.com/3",
+							ActiveTS: baseTime.Add(20 * time.Minute)}, nil
+					default:
+						return Article{}, fmt.Errorf("unknown article %s", id)
+					}
+				},
+				WaitActiveChangeFunc: func(_ context.Context, _ time.Duration) (string, error) {
+					switch waitCalls.Add(1) {
+					case 1: // topic 2 becomes active, its article fetch fails
+						currentTime.Store(baseTime.Add(10 * time.Minute).UnixNano())
+						return testTopic2, nil
+					case 2: // topic 3 supersedes it before it could be retried
+						currentTime.Store(baseTime.Add(20 * time.Minute).UnixNano())
+						return testTopic3, nil
+					default:
+						cancel()
+						return "", ctx.Err()
+					}
+				},
+			}
+
+			tracker := NewChapterTracker(mock, nowFn, 20)
+			tracker.Run(ctx)
+
+			chapters := tracker.Chapters()
+			titles := make([]string, len(chapters))
+			offsets := make([]time.Duration, len(chapters))
+			for i, c := range chapters {
+				titles[i], offsets[i] = c.Title, c.Offset
+			}
+			assert.Equal(t, tt.wantTitles, titles)
+			assert.Equal(t, tt.wantOffsets, offsets, "chapters must stay in ascending offset order")
+		})
+	}
+}
+
+func TestChapterTracker_RecoveredTopicBecomesTheLastRecorded(t *testing.T) {
+	t.Parallel()
+
+	// topic1 -> topic2 (fetch fails) -> topic3 (fetch fails, recovers topic2) -> topic1 again.
+	// the recovered chapter has to count as the last one recorded, otherwise topic1's return
+	// looks like no change at all and the recovered chapter runs to the end of the recording.
+	baseTime := time.Date(2026, 3, 28, 20, 30, 0, 0, time.UTC)
+	var currentTime atomic.Int64
+	currentTime.Store(baseTime.UnixNano())
+	nowFn := func() time.Time { return time.Unix(0, currentTime.Load()) }
+
+	var waitCalls, topic2Calls, topic3Calls atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+
+	mock := &NewsProviderMock{
+		FetchActiveIDFunc: func(_ context.Context) (string, error) {
+			return testTopic1, nil
+		},
+		FetchArticleFunc: func(_ context.Context, id string) (Article, error) {
+			switch id {
+			case testTopic1:
+				return Article{Title: "First Topic", Link: "https://example.com/1", ActiveTS: baseTime}, nil
+			case testTopic2:
+				if topic2Calls.Add(1) == 1 {
+					return Article{}, fmt.Errorf("news API returned status 502 for article %s", id)
+				}
+				return Article{Title: "Second Topic", Link: "https://example.com/2", ActiveTS: baseTime}, nil
+			case testTopic3:
+				if topic3Calls.Add(1) == 1 {
+					return Article{}, fmt.Errorf("news API returned status 502 for article %s", id)
+				}
+				return Article{Title: "Third Topic", Link: "https://example.com/3", ActiveTS: baseTime}, nil
+			default:
+				return Article{}, fmt.Errorf("unknown article %s", id)
+			}
+		},
+		WaitActiveChangeFunc: func(_ context.Context, _ time.Duration) (string, error) {
+			switch waitCalls.Add(1) {
+			case 1:
+				currentTime.Store(baseTime.Add(10 * time.Minute).UnixNano())
+				return testTopic2, nil
+			case 2:
+				currentTime.Store(baseTime.Add(20 * time.Minute).UnixNano())
+				return testTopic3, nil
+			case 3:
+				currentTime.Store(baseTime.Add(30 * time.Minute).UnixNano())
+				return testTopic1, nil
+			default:
+				cancel()
+				return "", ctx.Err()
+			}
+		},
+	}
+
+	tracker := NewChapterTracker(mock, nowFn, 20)
+	tracker.Run(ctx)
+
+	chapters := tracker.Chapters()
+	titles := make([]string, len(chapters))
+	offsets := make([]time.Duration, len(chapters))
+	for i, c := range chapters {
+		titles[i], offsets[i] = c.Title, c.Offset
+	}
+	assert.Equal(t, []string{"First Topic", "Second Topic", "Third Topic", "First Topic"}, titles)
+	assert.Equal(t, []time.Duration{0, 10 * time.Minute, 20 * time.Minute, 30 * time.Minute}, offsets,
+		"chapters must stay in ascending offset order")
 }
 
 func TestChapterTracker_ChaptersThreadSafe(t *testing.T) {
