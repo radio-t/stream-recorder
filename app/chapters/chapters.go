@@ -80,9 +80,17 @@ func (ct *ChapterTracker) fetchInitialTopic(ctx context.Context, startTime time.
 	return id, ""
 }
 
+// halfDay splits the week into "before" and "after" a given show start, so the show a recording
+// belongs to is the nearest one rather than whichever shares its UTC date.
+const halfDay = 12 * time.Hour
+
 // isStaleTopicForShow checks if a topic was activated before the show started.
-// the show starts at showStartHour UTC on the same UTC day as the recording start.
+// the show starts at showStartHour UTC, on the day of the show nearest the recording start.
 // returns true if the topic predates the show start, meaning it's a leftover.
+// the tracker knows the hour but not the weekday, so a recording started on a day with no show
+// is measured against the nearest showStartHour rather than the nearest actual broadcast. that
+// only arises for a manual recording well away from the schedule, where there is no show for a
+// topic to be a leftover from either way.
 func (ct *ChapterTracker) isStaleTopicForShow(activeTS, recordingStart time.Time) bool {
 	if activeTS.IsZero() {
 		return false // no timestamp available, assume topic is current
@@ -94,6 +102,12 @@ func (ct *ChapterTracker) isStaleTopicForShow(activeTS, recordingStart time.Time
 	showStart := time.Date(
 		startUTC.Year(), startUTC.Month(), startUTC.Day(),
 		ct.showStartHour, 0, 0, 0, time.UTC)
+	// the recording belongs to the nearest show, which is not always the one sharing its UTC
+	// date: a session started after midnight UTC still belongs to the show that began the
+	// previous evening, and taking the same UTC date there would mark every topic stale
+	if showStart.Sub(startUTC) > halfDay {
+		showStart = showStart.AddDate(0, 0, -1)
+	}
 	return activeTS.Before(showStart)
 }
 
