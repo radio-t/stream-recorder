@@ -809,3 +809,69 @@ func writeTestRecording(t *testing.T, path string) error {
 	buf.Write(audio)
 	return os.WriteFile(path, buf.Bytes(), 0o600)
 }
+
+func TestRecordStream_InterruptedRecordingIsFinalised(t *testing.T) {
+	const interruptedPath = "/tmp/rt999_interrupted.mp3"
+
+	var injectedPath string
+	var vbrPath string
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+		},
+	}
+	mr := &mockStreamRecorder{
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
+			// stream dropped mid-recording, the partial file is still on disk
+			return interruptedPath, fmt.Errorf("failed to read from stream: %w", io.ErrUnexpectedEOF)
+		},
+	}
+
+	cfg := runConfig{
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        time.Now,
+		injectMetadata: func(fp string, _ time.Duration, _ chapterProvider) error {
+			injectedPath = fp
+			return nil
+		},
+		fixVBRHeader: func(fp string) error {
+			vbrPath = fp
+			return nil
+		},
+	}
+
+	action := pollAndRecord(context.Background(), ml, mr, cfg, &recordingState{})
+
+	assert.Equal(t, continueLoop, action, "a stream failure should not stop the loop")
+	assert.Equal(t, interruptedPath, injectedPath, "an interrupted recording should still get its metadata")
+	assert.Equal(t, interruptedPath, vbrPath, "an interrupted recording should still get its VBR header fixed")
+}
+
+func TestRecordStream_DiscardedRecordingIsNotFinalised(t *testing.T) {
+	var injectCalls atomic.Int32
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+		},
+	}
+	mr := &mockStreamRecorder{
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
+			// nothing usable was written, the recorder removed the file
+			return "", fmt.Errorf("failed to create file: %w", os.ErrPermission)
+		},
+	}
+
+	cfg := runConfig{
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        time.Now,
+		injectMetadata: func(_ string, _ time.Duration, _ chapterProvider) error {
+			injectCalls.Add(1)
+			return nil
+		},
+	}
+
+	action := pollAndRecord(context.Background(), ml, mr, cfg, &recordingState{})
+
+	assert.Equal(t, continueLoop, action)
+	assert.Equal(t, int32(0), injectCalls.Load(), "nothing to finalise when no file was produced")
+}
