@@ -2,6 +2,7 @@
 package id3
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -44,6 +45,12 @@ const maxSyncsafeTagSize = 1<<28 - 1
 // any padding the existing tag ends with is dropped, since the spec places padding after
 // the last frame and parsers stop reading there.
 func InjectFrames(filePath string, extraFrames []byte) error {
+	return InjectFramesContext(context.Background(), filePath, extraFrames)
+}
+
+// InjectFramesContext is InjectFrames bounded by ctx: cancelling it aborts the copy between
+// reads and removes the temporary file, leaving the original in place.
+func InjectFramesContext(ctx context.Context, filePath string, extraFrames []byte) error {
 	srcInfo, err := os.Stat(filePath)
 	if err != nil {
 		return fmt.Errorf("stat file: %w", err)
@@ -73,7 +80,7 @@ func InjectFrames(filePath string, extraFrames []byte) error {
 	}
 	PutSyncsafe(header[6:10], newSize)
 
-	tmpPath, err := rewriteFile(filepath.Dir(filePath), header, existing, src, copySize, extraFrames)
+	tmpPath, err := rewriteFile(ctx, filepath.Dir(filePath), header, existing, src, copySize, extraFrames)
 	if err != nil {
 		return err
 	}
@@ -129,7 +136,8 @@ func frameRegionEnd(frames []byte) int {
 // rewriteFile creates a temp file with: updated header + existing frames + extra frames + audio.
 // existing holds already-read frame bytes, frameSize the number of frame bytes still to copy
 // from src; exactly one of the two is used.
-func rewriteFile(dir string, header, existing []byte, src io.Reader, frameSize int64, extra []byte) (string, error) {
+func rewriteFile(ctx context.Context, dir string, header, existing []byte, src io.Reader,
+	frameSize int64, extra []byte) (string, error) {
 	tmp, err := os.CreateTemp(dir, "id3-*.tmp")
 	if err != nil {
 		return "", fmt.Errorf("create temp file: %w", err)
@@ -149,13 +157,13 @@ func rewriteFile(dir string, header, existing []byte, src io.Reader, frameSize i
 	if _, err := tmp.Write(existing); err != nil {
 		return "", fmt.Errorf("write existing frames: %w", err)
 	}
-	if _, err := io.CopyN(tmp, src, frameSize); err != nil {
+	if _, err := io.CopyN(tmp, &ctxReader{ctx: ctx, r: src}, frameSize); err != nil {
 		return "", fmt.Errorf("copy existing frames: %w", err)
 	}
 	if _, err := tmp.Write(extra); err != nil {
 		return "", fmt.Errorf("write extra frames: %w", err)
 	}
-	if _, err := io.Copy(tmp, src); err != nil {
+	if _, err := io.Copy(tmp, &ctxReader{ctx: ctx, r: src}); err != nil {
 		return "", fmt.Errorf("copy audio data: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -163,6 +171,20 @@ func rewriteFile(dir string, header, existing []byte, src io.Reader, frameSize i
 	}
 	ok = true
 	return tmpPath, nil
+}
+
+// ctxReader aborts a copy between reads once the context is done, so rewriting a multi-gigabyte
+// recording does not have to run to completion before the process can exit.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c *ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p) //nolint:wrapcheck // transparent pass-through
 }
 
 // ReadTLEN reads the TLEN (track length) value from an MP3 file's ID3v2 header.
