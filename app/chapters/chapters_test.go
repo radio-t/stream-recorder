@@ -302,11 +302,71 @@ func TestChapterTracker_InitialFetchError(t *testing.T) {
 	tracker := NewChapterTracker(mock, nowFn, 20)
 	tracker.Run(ctx)
 
-	// should still collect chapters from long-poll even if initial fetch failed
+	// the opening is covered by the intro chapter, and the long poll still collects the rest
 	chapters := tracker.Chapters()
-	require.Len(t, chapters, 1)
-	assert.Equal(t, "Later Topic", chapters[0].Title)
-	assert.Equal(t, 5*time.Minute, chapters[0].Offset)
+	require.Len(t, chapters, 2)
+	assert.Equal(t, introChapterTitle, chapters[0].Title)
+	assert.Equal(t, time.Duration(0), chapters[0].Offset)
+	assert.Equal(t, "Later Topic", chapters[1].Title)
+	assert.Equal(t, 5*time.Minute, chapters[1].Offset)
+}
+
+func TestChapterTracker_OpensWithIntroWhenNoTopicYet(t *testing.T) {
+	t.Parallel()
+
+	// the live news API answers 404 "can't get active" until the news part of the show starts,
+	// which is 45 minutes to an hour and a half into a recording
+	tests := []struct {
+		name     string
+		activeID string
+		err      error
+	}{
+		{name: "api reports no active topic", activeID: "", err: fmt.Errorf("news API returned status 404")},
+		{name: "api returns an empty id", activeID: "", err: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			baseTime := time.Date(2026, 8, 29, 19, 56, 0, 0, time.UTC)
+			var currentTime atomic.Int64
+			currentTime.Store(baseTime.UnixNano())
+			nowFn := func() time.Time { return time.Unix(0, currentTime.Load()) }
+
+			var waitCalls atomic.Int32
+			ctx, cancel := context.WithCancel(context.Background())
+
+			mock := &NewsProviderMock{
+				FetchActiveIDFunc: func(_ context.Context) (string, error) {
+					return tt.activeID, tt.err
+				},
+				FetchArticleFunc: func(_ context.Context, _ string) (Article, error) {
+					return Article{Title: "First Topic", Link: "https://example.com/1",
+						ActiveTS: baseTime.Add(time.Hour + 13*time.Minute)}, nil
+				},
+				WaitActiveChangeFunc: func(_ context.Context, _ time.Duration) (string, error) {
+					if waitCalls.Add(1) == 1 { // the first topic goes live an hour and a bit in
+						currentTime.Store(baseTime.Add(time.Hour + 13*time.Minute).UnixNano())
+						return testTopic1, nil
+					}
+					cancel()
+					return "", ctx.Err()
+				},
+			}
+
+			tracker := NewChapterTracker(mock, nowFn, 20)
+			tracker.Run(ctx)
+
+			chapters := tracker.Chapters()
+			require.Len(t, chapters, 2, "the opening must be covered by a chapter")
+			assert.Equal(t, introChapterTitle, chapters[0].Title)
+			assert.Empty(t, chapters[0].Link)
+			assert.Equal(t, time.Duration(0), chapters[0].Offset)
+			assert.Equal(t, "First Topic", chapters[1].Title)
+			assert.Equal(t, time.Hour+13*time.Minute, chapters[1].Offset)
+		})
+	}
 }
 
 func TestChapterTracker_ArticleFetchError(t *testing.T) {
@@ -529,6 +589,25 @@ func TestChapterTracker_RetriesFailedInitialArticleFetch(t *testing.T) {
 			assert.Equal(t, time.Duration(0), chapters[0].Offset, "recovered initial topic starts at the recording start")
 		})
 	}
+}
+
+func TestChapterTracker_IntroChapterOnlyOpensAnEmptyList(t *testing.T) {
+	t.Parallel()
+
+	tracker := NewChapterTracker(nil, time.Now, 20)
+	tracker.addIntroChapter()
+	tracker.addIntroChapter()
+	require.Len(t, tracker.Chapters(), 1, "the intro chapter must not be added twice")
+
+	tracker.mu.Lock()
+	tracker.chapters = append(tracker.chapters, Chapter{Title: "Real Topic", Offset: time.Hour})
+	tracker.mu.Unlock()
+
+	tracker.addIntroChapter()
+	chapters := tracker.Chapters()
+	require.Len(t, chapters, 2, "an offset 0 chapter must never land after a real one")
+	assert.Equal(t, time.Duration(0), chapters[0].Offset)
+	assert.Equal(t, time.Hour, chapters[1].Offset)
 }
 
 func TestChapterTracker_ChaptersThreadSafe(t *testing.T) {
