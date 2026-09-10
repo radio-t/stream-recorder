@@ -121,9 +121,11 @@ type runConfig struct {
 	schedule          bool // enable time-based recording window
 	tickInterval      time.Duration
 	nowFn             func() time.Time
-	newChapterTracker func() chapterProvider                             // nil = chapter tracking disabled
-	injectMetadata    func(string, time.Duration, chapterProvider) error // post-recording metadata injection
-	fixVBRHeader      func(string) error                                 // post-recording VBR header fix
+	newChapterTracker func() chapterProvider // nil = chapter tracking disabled
+	// post-recording metadata injection, bounded by the finalisation context
+	injectMetadata func(context.Context, string, time.Duration, chapterProvider) error
+	// post-recording VBR header fix, bounded by the finalisation context
+	fixVBRHeader func(context.Context, string) error
 }
 
 // recordingState holds mutable runtime state for the recording loop.
@@ -141,7 +143,7 @@ func newRunConfig(schedule bool, newsAPI string) runConfig {
 		tickInterval:   5 * time.Second, //nolint:mnd
 		nowFn:          time.Now,
 		injectMetadata: defaultInjectMetadata,
-		fixVBRHeader:   recorder.FixVBRHeader,
+		fixVBRHeader:   recorder.FixVBRHeaderContext,
 	}
 	if newsAPI != "" {
 		slog.Info("Chapter tracking enabled", slog.String("news_api", newsAPI))
@@ -149,8 +151,8 @@ func newRunConfig(schedule bool, newsAPI string) runConfig {
 			nc := chapters.NewNewsClient(http.DefaultClient, newsAPI)
 			return chapters.NewChapterTracker(nc, time.Now, showHour)
 		}
-		cfg.injectMetadata = func(filePath string, duration time.Duration, tracker chapterProvider) error {
-			return injectPostRecordingMetadata(filePath, duration, tracker, chapters.BuildChapterFrames) //nolint:wrapcheck // thin wrapper
+		cfg.injectMetadata = func(ctx context.Context, filePath string, duration time.Duration, tracker chapterProvider) error {
+			return injectPostRecordingMetadata(ctx, filePath, duration, tracker, chapters.BuildChapterFrames) //nolint:wrapcheck // thin wrapper
 		}
 	}
 	return cfg
@@ -488,32 +490,42 @@ func logRecordingFinished(msg, episode, filePath string, duration time.Duration)
 	slog.Info(msg, attrs...)
 }
 
+// finaliseTimeout bounds post-recording processing. both passes rewrite the whole file, so a
+// stalled disk or a hung ffmpeg would otherwise keep the process alive for as long as it takes.
+const finaliseTimeout = 5 * time.Minute
+
 // tryInjectMetadata fixes the VBR header so players show correct duration and seek positions,
 // then calls the configured metadata injector.
 // the order matters: the ffmpeg remux rebuilds the ID3 tag from the stream metadata it
 // understands and drops the WXXX article links out of the chapter frames, so the metadata
 // has to be written after it, not before.
+// both steps share one bounded context, so the deadline caps the whole of finalisation rather
+// than each pass: post-recording work still happens after shutdown was requested, since that is
+// when a recording usually ends, but it cannot hold up exit indefinitely.
 func tryInjectMetadata(cfg runConfig, filePath string, duration time.Duration, tracker chapterProvider) {
+	ctx, cancel := context.WithTimeout(context.Background(), finaliseTimeout)
+	defer cancel()
+
 	if cfg.fixVBRHeader != nil {
-		if err := cfg.fixVBRHeader(filePath); err != nil {
+		if err := cfg.fixVBRHeader(ctx, filePath); err != nil {
 			slog.Error("failed to fix VBR header", slog.String("err", err.Error()))
 		}
 	}
 	if cfg.injectMetadata != nil {
-		if err := cfg.injectMetadata(filePath, duration, tracker); err != nil {
+		if err := cfg.injectMetadata(ctx, filePath, duration, tracker); err != nil {
 			slog.Error("failed to inject metadata", slog.String("err", err.Error()))
 		}
 	}
 }
 
 // defaultInjectMetadata is the default metadata injector (TLEN only, no chapters).
-func defaultInjectMetadata(filePath string, duration time.Duration, tracker chapterProvider) error {
-	return injectPostRecordingMetadata(filePath, duration, tracker, nil) //nolint:wrapcheck // thin wrapper
+func defaultInjectMetadata(ctx context.Context, filePath string, duration time.Duration, tracker chapterProvider) error {
+	return injectPostRecordingMetadata(ctx, filePath, duration, tracker, nil) //nolint:wrapcheck // thin wrapper
 }
 
 // injectPostRecordingMetadata writes TLEN and chapter markers into the recorded file
 // in a single file rewrite pass.
-func injectPostRecordingMetadata(filePath string, duration time.Duration,
+func injectPostRecordingMetadata(ctx context.Context, filePath string, duration time.Duration,
 	tracker chapterProvider, buildChapFrames func([]chapters.Chapter) []byte) error {
 	// build TLEN frame
 	frames := recorder.TLENFrame(duration)
@@ -526,5 +538,5 @@ func injectPostRecordingMetadata(filePath string, duration time.Duration,
 		}
 	}
 
-	return id3.InjectFrames(filePath, frames)
+	return id3.InjectFramesContext(ctx, filePath, frames)
 }

@@ -287,7 +287,7 @@ func TestPollAndRecord_WithChapterTracking(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectMetadata: func(fp string, _ time.Duration, tp chapterProvider) error {
+		injectMetadata: func(_ context.Context, fp string, _ time.Duration, tp chapterProvider) error {
 			injectedPath = fp
 			assert.Equal(t, chaps, tp.Chapters(), "tracker should have collected chapters")
 			return nil
@@ -354,7 +354,7 @@ func TestPollAndRecord_NoChaptersCollected(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectMetadata: func(_ string, _ time.Duration, tp chapterProvider) error {
+		injectMetadata: func(_ context.Context, _ string, _ time.Duration, tp chapterProvider) error {
 			metadataInjected = true
 			assert.Empty(t, tp.Chapters(), "tracker should have no chapters")
 			return nil
@@ -393,7 +393,7 @@ func TestPollAndRecord_ChapterTrackingRecordingFails(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectMetadata: func(_ string, _ time.Duration, _ chapterProvider) error {
+		injectMetadata: func(_ context.Context, _ string, _ time.Duration, _ chapterProvider) error {
 			injectionCalled = true
 			return nil
 		},
@@ -430,7 +430,7 @@ func TestPollAndRecord_ChapterInjectionError(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectMetadata: func(_ string, _ time.Duration, _ chapterProvider) error {
+		injectMetadata: func(_ context.Context, _ string, _ time.Duration, _ chapterProvider) error {
 			return fmt.Errorf("injection failed")
 		},
 	}
@@ -477,7 +477,7 @@ func TestPollAndRecord_ChapterInjectionOnContextCancel(t *testing.T) {
 		newChapterTracker: func() chapterProvider {
 			return tracker
 		},
-		injectMetadata: func(fp string, _ time.Duration, tp chapterProvider) error {
+		injectMetadata: func(_ context.Context, fp string, _ time.Duration, tp chapterProvider) error {
 			injectedPath = fp
 			assert.Equal(t, chaps, tp.Chapters(), "tracker should have collected chapters")
 			return nil
@@ -730,7 +730,7 @@ func TestRun_ChapterTrackingPerRecording(t *testing.T) {
 				chapters:  nil,
 			}
 		},
-		injectMetadata: func(_ string, _ time.Duration, _ chapterProvider) error {
+		injectMetadata: func(_ context.Context, _ string, _ time.Duration, _ chapterProvider) error {
 			return nil
 		},
 	}
@@ -764,10 +764,10 @@ func TestTryInjectMetadata_PostProcessingKeepsChapterLinks(t *testing.T) {
 		},
 	}
 	cfg := runConfig{
-		injectMetadata: func(fp string, d time.Duration, tp chapterProvider) error {
-			return injectPostRecordingMetadata(fp, d, tp, chapters.BuildChapterFrames)
+		injectMetadata: func(ctx context.Context, fp string, d time.Duration, tp chapterProvider) error {
+			return injectPostRecordingMetadata(ctx, fp, d, tp, chapters.BuildChapterFrames)
 		},
-		fixVBRHeader: recorder.FixVBRHeader,
+		fixVBRHeader: recorder.FixVBRHeaderContext,
 	}
 
 	tryInjectMetadata(cfg, filePath, 2*time.Second, tracker)
@@ -808,4 +808,68 @@ func writeTestRecording(t *testing.T, path string) error {
 	}
 	buf.Write(audio)
 	return os.WriteFile(path, buf.Bytes(), 0o600)
+}
+
+func TestTryInjectMetadata_BoundsPostProcessing(t *testing.T) {
+	var injectDeadline, vbrDeadline time.Time
+	var injectOK, vbrOK bool
+
+	cfg := runConfig{
+		injectMetadata: func(ctx context.Context, _ string, _ time.Duration, _ chapterProvider) error {
+			injectDeadline, injectOK = ctx.Deadline()
+			return nil
+		},
+		fixVBRHeader: func(ctx context.Context, _ string) error {
+			vbrDeadline, vbrOK = ctx.Deadline()
+			return nil
+		},
+	}
+
+	tryInjectMetadata(cfg, "/tmp/rt999.mp3", time.Minute, nil)
+
+	require.True(t, injectOK, "metadata injection should run under a bounded context")
+	require.True(t, vbrOK, "the VBR fix should run under a bounded context")
+	assert.WithinDuration(t, time.Now().Add(finaliseTimeout), injectDeadline, time.Minute)
+	assert.WithinDuration(t, time.Now().Add(finaliseTimeout), vbrDeadline, time.Minute)
+}
+
+func TestTryInjectMetadata_RunsAfterShutdown(t *testing.T) {
+	var injectCalls, vbrCalls atomic.Int32
+	var injectCtxErr, vbrCtxErr error
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // shutdown already requested
+
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+		},
+	}
+	mr := &mockStreamRecorder{
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
+			return testRecordedPath, context.Canceled
+		},
+	}
+	cfg := runConfig{
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        time.Now,
+		injectMetadata: func(ctx context.Context, _ string, _ time.Duration, _ chapterProvider) error {
+			injectCtxErr = ctx.Err()
+			injectCalls.Add(1)
+			return nil
+		},
+		fixVBRHeader: func(ctx context.Context, _ string) error {
+			vbrCtxErr = ctx.Err()
+			vbrCalls.Add(1)
+			return nil
+		},
+	}
+
+	action := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
+
+	assert.Equal(t, stopLoop, action)
+	assert.Equal(t, int32(1), injectCalls.Load(), "metadata should still be written on shutdown")
+	assert.Equal(t, int32(1), vbrCalls.Load(), "the VBR header should still be fixed on shutdown")
+	require.NoError(t, injectCtxErr, "finalisation should not inherit the cancelled context")
+	require.NoError(t, vbrCtxErr, "finalisation should not inherit the cancelled context")
 }
