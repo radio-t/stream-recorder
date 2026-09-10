@@ -518,12 +518,46 @@ func (s *Server) DownloadEpisodeHandler(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", folder+".zip"))
 
-	writer := zip.NewWriter(w)
-	defer writer.Close() //nolint:errcheck
-
+	probe := &responseProbe{w: w, written: false}
+	writer := newEpisodeArchive(probe)
 	if err := zipDir(writer, dirPath); err != nil {
-		slog.Error("error zipping episode dir", slog.String("error", err.Error()))
+		slog.Error("error zipping episode dir", slog.Any("error", err))
+		if !probe.written {
+			// nothing reached the client, so the status is still ours to choose
+			w.Header().Del("Content-Disposition")
+			http.Error(w, "failed to build archive", http.StatusInternalServerError)
+			return
+		}
+		// the 200 is already out, so the archive is left unfinished on purpose: closing it
+		// would write a central directory and hand the client a valid-looking archive that
+		// silently misses a file
+		return
 	}
+	if err := writer.Close(); err != nil {
+		slog.Error("error finishing episode archive", slog.Any("error", err))
+	}
+}
+
+// responseProbe records whether anything has been written to the response yet, which is what
+// decides whether the status is still ours to choose: net/http commits the header on the first
+// Write, whether or not that write then succeeds.
+type responseProbe struct {
+	w       io.Writer
+	written bool
+}
+
+func (p *responseProbe) Write(b []byte) (int, error) {
+	p.written = true
+	n, err := p.w.Write(b)
+	return n, err //nolint:wrapcheck // transparent pass-through
+}
+
+// newEpisodeArchive creates the zip writer episode downloads are built with.
+// entries stay deflated: a recorded show still gives up a few percent, which measurably beats
+// the CPU it costs, and the response is not seekable so every entry carries a data descriptor,
+// which streaming readers such as Java's ZipInputStream accept only for deflated entries.
+func newEpisodeArchive(w io.Writer) *zip.Writer {
+	return zip.NewWriter(w)
 }
 
 // zipDir writes all regular files from dir into the zip writer, skipping directories and .tmp files.
@@ -536,18 +570,38 @@ func zipDir(w *zip.Writer, dir string) error {
 		if entry.IsDir() || strings.HasSuffix(entry.Name(), ".tmp") {
 			continue // skip transient temp files (e.g. chapter injection)
 		}
-		fp := filepath.Join(dir, entry.Name())
-		src, openErr := os.Open(fp) //nolint:gosec // caller validates dir
-		if openErr != nil {
-			continue
+		if err := zipEntry(w, dir, entry); err != nil {
+			return err
 		}
-		dst, createErr := w.Create(entry.Name())
-		if createErr != nil {
-			src.Close() //nolint:errcheck,gosec
-			continue
+	}
+	return nil
+}
+
+// zipEntry copies a single file into the archive, carrying over the file's modification time,
+// which zip.Writer.Create would otherwise leave at the start of the DOS epoch.
+func zipEntry(w *zip.Writer, dir string, entry os.DirEntry) (err error) {
+	info, err := entry.Info()
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", entry.Name(), err)
+	}
+
+	src, err := os.Open(filepath.Join(dir, entry.Name())) //nolint:gosec // caller validates dir
+	if err != nil {
+		return fmt.Errorf("open %s: %w", entry.Name(), err)
+	}
+	defer func() {
+		if closeErr := src.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close %s: %w", entry.Name(), closeErr)
 		}
-		io.Copy(dst, src) //nolint:errcheck,gosec
-		src.Close()       //nolint:errcheck,gosec
+	}()
+
+	hdr := &zip.FileHeader{Name: entry.Name(), Method: zip.Deflate, Modified: info.ModTime()} //nolint:exhaustruct // the rest is filled in by the writer
+	dst, err := w.CreateHeader(hdr)
+	if err != nil {
+		return fmt.Errorf("create zip entry %s: %w", entry.Name(), err)
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("copy %s: %w", entry.Name(), err)
 	}
 	return nil
 }
