@@ -11,7 +11,6 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/radio-t/stream-recorder/app/id3"
 	"github.com/radio-t/stream-recorder/app/recorder"
 	"github.com/radio-t/stream-recorder/app/server"
+	"github.com/radio-t/stream-recorder/app/session"
 )
 
 var opts struct { //nolint:gochecknoglobals
@@ -73,14 +73,14 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	var forceRecord, recording atomic.Bool
+	sess := session.NewController(manualRequestTTL, time.Now)
 
 	client := recorder.NewClient(http.DefaultClient, opts.Stream, opts.Site)
-	rec := recorder.NewRecorder(opts.Dir, func() { recording.Store(true) })
+	rec := recorder.NewRecorder(opts.Dir, sess.Started)
 	listener := recorder.NewListener(client)
 
 	wg := sync.WaitGroup{}
-	startServer(ctx, &wg, opts.Port, opts.Dir, opts.AuthPasswd, &forceRecord, &recording, makeScheduleStatusFn(opts.Schedule))
+	startServer(ctx, &wg, opts.Port, opts.Dir, opts.AuthPasswd, sess, makeScheduleStatusFn(opts.Schedule))
 	startPurge(ctx, &wg, purgeConfig{
 		dir:           opts.Dir,
 		retentionDays: opts.RetentionDays,
@@ -89,7 +89,7 @@ func main() {
 	})
 
 	cfg := newRunConfig(opts.Schedule, opts.NewsAPI)
-	state := &recordingState{forceRecord: &forceRecord, recording: &recording} //nolint:exhaustruct // wasInWindow, pollCount start at zero
+	state := newRecordingState(sess)
 
 	wg.Add(1)
 	go func() {
@@ -126,12 +126,20 @@ type runConfig struct {
 	fixVBRHeader      func(string) error                                 // post-recording VBR header fix
 }
 
+// manualRequestTTL is how long an accepted manual recording request waits for a stream before
+// it is dropped, so a button press cannot start a recording hours later.
+const manualRequestTTL = 30 * time.Minute
+
 // recordingState holds mutable runtime state for the recording loop.
 type recordingState struct {
-	forceRecord *atomic.Bool
-	recording   *atomic.Bool
+	session     *session.Controller
 	wasInWindow bool // tracks previous window state for transition logging
 	pollCount   int  // counts polls within current state for throttled debug logging
+}
+
+// newRecordingState creates the loop state around a recording lifecycle controller.
+func newRecordingState(sess *session.Controller) *recordingState {
+	return &recordingState{session: sess} //nolint:exhaustruct // wasInWindow and pollCount start at zero
 }
 
 // newRunConfig creates a runConfig with standard defaults, optionally enabling chapter tracking.
@@ -158,13 +166,13 @@ func newRunConfig(schedule bool, newsAPI string) runConfig {
 
 // startServer starts the HTTP server if a port is configured.
 func startServer(ctx context.Context, wg *sync.WaitGroup, port, dir, authPasswd string,
-	forceRecord, recording *atomic.Bool, scheduleFn func() server.ScheduleStatus) {
+	sess server.RecordSession, scheduleFn func() server.ScheduleStatus) {
 	if port == "" {
 		return
 	}
 	slog.Info("Healthcheck enabled")
 
-	s := server.NewServer(port, dir, authPasswd, forceRecord, recording, scheduleFn)
+	s := server.NewServer(port, dir, authPasswd, sess, scheduleFn)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -363,10 +371,15 @@ func run(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig,
 // with a 5s tick interval this means debug messages appear roughly every minute.
 const debugLogInterval = 12
 
+// inRecordingWindow reports whether the schedule currently permits recording.
+func inRecordingWindow(cfg runConfig) bool {
+	return !cfg.schedule || inScheduleWindow(cfg.nowFn())
+}
+
 // logWindowTransitions detects and logs recording window entry/exit transitions.
 // returns whether the current time is inside the recording window.
 func logWindowTransitions(cfg runConfig, state *recordingState) bool {
-	inWindow := !cfg.schedule || inScheduleWindow(cfg.nowFn())
+	inWindow := inRecordingWindow(cfg)
 	if !cfg.schedule {
 		return inWindow
 	}
@@ -389,10 +402,10 @@ func logWindowTransitions(cfg runConfig, state *recordingState) bool {
 // pollAndRecord checks the schedule, listens for a stream and records it.
 // returns stopLoop when the context is cancelled and the loop should exit.
 func pollAndRecord(ctx context.Context, l streamListener, r streamRecorder, cfg runConfig, state *recordingState) loopAction {
-	forced := state.forceRecord != nil && state.forceRecord.Load()
+	requested := state.session.Requested()
 	inWindow := logWindowTransitions(cfg, state)
 
-	if !forced && !inWindow {
+	if !requested && !inWindow {
 		state.pollCount++
 		if state.pollCount == 1 || state.pollCount%debugLogInterval == 0 {
 			slog.Debug("outside recording window", slog.String("next_in", fmtDuration(timeToNextWindow(cfg.nowFn()))))
@@ -412,18 +425,22 @@ func pollAndRecord(ctx context.Context, l streamListener, r streamRecorder, cfg 
 		slog.Error("error while listening", slog.String("err", err.Error()))
 	default:
 		state.pollCount = 0
-		return recordStream(ctx, r, stream, cfg, state, forced)
+		return recordStream(ctx, r, stream, cfg, state)
 	}
 	return continueLoop
 }
 
-// recordStream records a single stream session, managing force and recording flags.
+// recordStream records a single stream session, holding the recording lifecycle for its duration.
+// the schedule window and any manual request are re-checked here rather than reused from the
+// poll, since fetching the stream can take long enough for either to lapse in between.
 // when chapter tracking is configured, starts a tracker goroutine alongside the recording
 // and injects collected chapters into the file after recording completes.
 // returns stopLoop when the context is cancelled and the loop should exit.
-func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream, cfg runConfig, state *recordingState, forced bool) loopAction {
-	if forced {
-		state.forceRecord.Store(false)
+func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream, cfg runConfig, state *recordingState) loopAction {
+	if !state.session.Begin(inRecordingWindow(cfg)) {
+		slog.Debug("recorder is busy, skipping this stream")
+		stream.Body.Close() //nolint:errcheck,gosec // nothing will read it
+		return continueLoop
 	}
 
 	// start chapter tracking if configured
@@ -451,11 +468,10 @@ func recordStream(ctx context.Context, r streamRecorder, stream *recorder.Stream
 		<-trackerDone
 	}
 
-	// clear recording flag before chapter injection so live stream clients
-	// stop reading the file before it gets rewritten with chapter frames
-	if state.recording != nil {
-		state.recording.Store(false)
-	}
+	// release the session before chapter injection so live stream clients stop reading the
+	// file before it gets rewritten with chapter frames. a session that never got as far as
+	// writing audio hands its manual request back, so it is retried until the request expires
+	state.session.End()
 
 	if err != nil {
 		if ctx.Err() != nil {

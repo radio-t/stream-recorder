@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -20,6 +22,7 @@ import (
 	"github.com/radio-t/stream-recorder/app/chapters"
 	"github.com/radio-t/stream-recorder/app/id3"
 	"github.com/radio-t/stream-recorder/app/recorder"
+	"github.com/radio-t/stream-recorder/app/session"
 )
 
 type mockStreamListener struct {
@@ -60,7 +63,7 @@ func TestRun_NoSchedule(t *testing.T) {
 		nowFn:        time.Now,
 	}
 
-	run(ctx, ml, mr, cfg, &recordingState{})
+	run(ctx, ml, mr, cfg, newTestState())
 	assert.Positive(t, ml.calls.Load(), "listener should be called when schedule is disabled")
 }
 
@@ -84,7 +87,7 @@ func TestRun_ScheduleInsideWindow(t *testing.T) {
 		nowFn:        func() time.Time { return fixedTime },
 	}
 
-	run(ctx, ml, mr, cfg, &recordingState{})
+	run(ctx, ml, mr, cfg, newTestState())
 	assert.Positive(t, ml.calls.Load(), "listener should be called inside recording window")
 }
 
@@ -108,7 +111,7 @@ func TestRun_ScheduleOutsideWindow(t *testing.T) {
 		nowFn:        func() time.Time { return fixedTime },
 	}
 
-	run(ctx, ml, mr, cfg, &recordingState{})
+	run(ctx, ml, mr, cfg, newTestState())
 	assert.Equal(t, int32(0), ml.calls.Load(), "listener should not be called outside recording window")
 }
 
@@ -122,16 +125,6 @@ func TestRun_ForceRecordOverridesSchedule(t *testing.T) {
 			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
 		},
 	}
-	mr := &mockStreamRecorder{
-		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
-			recorded.Store(true)
-			return "", nil
-		},
-	}
-
-	var forceFlag atomic.Bool
-	forceFlag.Store(true)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
@@ -140,12 +133,22 @@ func TestRun_ForceRecordOverridesSchedule(t *testing.T) {
 		tickInterval: 10 * time.Millisecond,
 		nowFn:        func() time.Time { return fixedTime },
 	}
-	state := &recordingState{forceRecord: &forceFlag}
+	state := newTestState()
+	require.True(t, state.session.Request(), "a manual recording should be accepted while idle")
+
+	mr := &mockStreamRecorder{
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
+			// the real recorder reports this through its onReady callback once the file exists
+			state.session.Started()
+			recorded.Store(true)
+			return "", nil
+		},
+	}
 
 	run(ctx, ml, mr, cfg, state)
 
-	assert.True(t, recorded.Load(), "recording should happen outside window when force flag is set")
-	assert.False(t, forceFlag.Load(), "force flag should be cleared after recording session")
+	assert.True(t, recorded.Load(), "recording should happen outside window when a recording was requested")
+	assert.Equal(t, session.Idle, state.session.State(), "the request should be consumed by the session")
 }
 
 func TestStartPurge_DisabledWhenZeroRetention(t *testing.T) {
@@ -241,6 +244,11 @@ func makeTestFile(t *testing.T, dir, relPath string, modTime time.Time) {
 
 const testRecordedPath = "/tmp/test.mp3"
 
+// newTestState creates loop state with a fresh recording lifecycle controller.
+func newTestState() *recordingState {
+	return newRecordingState(session.NewController(time.Minute, time.Now))
+}
+
 // mockChapterProvider implements chapterProvider for testing.
 type mockChapterProvider struct {
 	runCalled chan struct{} // closed when Run starts
@@ -295,7 +303,7 @@ func TestPollAndRecord_WithChapterTracking(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	action := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
+	action := pollAndRecord(ctx, ml, mr, cfg, newTestState())
 
 	assert.Equal(t, continueLoop, action)
 	assert.Equal(t, testRecordedPath, injectedPath, "metadata should be injected into recorded file")
@@ -322,7 +330,7 @@ func TestPollAndRecord_ChapterTrackingDisabled(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	action := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
+	action := pollAndRecord(ctx, ml, mr, cfg, newTestState())
 
 	assert.Equal(t, continueLoop, action)
 	assert.True(t, recorded, "recording should work without chapter tracking")
@@ -362,7 +370,7 @@ func TestPollAndRecord_NoChaptersCollected(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
+	pollAndRecord(ctx, ml, mr, cfg, newTestState())
 
 	assert.True(t, metadataInjected, "metadata injection should be called for TLEN even without chapters")
 }
@@ -400,7 +408,7 @@ func TestPollAndRecord_ChapterTrackingRecordingFails(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	action := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
+	action := pollAndRecord(ctx, ml, mr, cfg, newTestState())
 
 	assert.Equal(t, continueLoop, action)
 	assert.False(t, injectionCalled, "injection should not be called when recording fails")
@@ -436,7 +444,7 @@ func TestPollAndRecord_ChapterInjectionError(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	action := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
+	action := pollAndRecord(ctx, ml, mr, cfg, newTestState())
 
 	// injection error should be logged but not stop the recording loop
 	assert.Equal(t, continueLoop, action, "injection error should not stop the recording loop")
@@ -484,7 +492,7 @@ func TestPollAndRecord_ChapterInjectionOnContextCancel(t *testing.T) {
 		},
 	}
 
-	action := pollAndRecord(ctx, ml, mr, cfg, &recordingState{})
+	action := pollAndRecord(ctx, ml, mr, cfg, newTestState())
 
 	assert.Equal(t, stopLoop, action, "should signal clean shutdown")
 	assert.Equal(t, testRecordedPath, injectedPath, "metadata should be injected even on context cancellation")
@@ -687,7 +695,7 @@ func TestPollAndRecord_WindowTransitionLogging(t *testing.T) {
 		tickInterval: 10 * time.Millisecond,
 		nowFn:        func() time.Time { return currentTime },
 	}
-	state := &recordingState{}
+	state := newTestState()
 
 	// poll outside window
 	pollAndRecord(context.Background(), ml, mr, cfg, state)
@@ -738,7 +746,7 @@ func TestRun_ChapterTrackingPerRecording(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	run(ctx, ml, mr, cfg, &recordingState{})
+	run(ctx, ml, mr, cfg, newTestState())
 
 	assert.Equal(t, trackerCount.Load(), recordCount.Load(),
 		"a new chapter tracker should be created for each recording")
@@ -808,4 +816,143 @@ func writeTestRecording(t *testing.T, path string) error {
 	}
 	buf.Write(audio)
 	return os.WriteFile(path, buf.Bytes(), 0o600)
+}
+
+func TestPollAndRecord_RequestSurvivesStartFailure(t *testing.T) {
+	var attempts atomic.Int32
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+		},
+	}
+	mr := &mockStreamRecorder{}
+	cfg := runConfig{
+		schedule:     true,
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        func() time.Time { return time.Date(2026, 3, 24, 12, 0, 0, 0, time.UTC) }, // outside the window
+	}
+
+	state := newTestState()
+	require.True(t, state.session.Request())
+	// the real recorder reports this through its onReady callback once the file exists
+	mr.recordFn = func(_ context.Context, _ *recorder.Stream) (string, error) {
+		if attempts.Add(1) == 1 { // the output file could not be created
+			return "", fmt.Errorf("failed to create file: %w", os.ErrPermission)
+		}
+		state.session.Started()
+		return testRecordedPath, nil
+	}
+
+	assert.Equal(t, continueLoop, pollAndRecord(context.Background(), ml, mr, cfg, state))
+	assert.True(t, state.session.Requested(), "a request must survive a session that never started")
+
+	assert.Equal(t, continueLoop, pollAndRecord(context.Background(), ml, mr, cfg, state))
+	assert.Equal(t, int32(2), attempts.Load(), "the request should be retried on the next poll")
+	assert.Equal(t, session.Idle, state.session.State(), "the retried request is spent once it records")
+}
+
+func TestPollAndRecord_RequestDuringRecordingIsRefused(t *testing.T) {
+	recording := make(chan struct{})
+	release := make(chan struct{})
+
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+		},
+	}
+	cfg := runConfig{
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        time.Now,
+	}
+
+	state := newTestState()
+	mr := &mockStreamRecorder{
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
+			state.session.Started()
+			close(recording)
+			<-release
+			return testRecordedPath, nil
+		},
+	}
+
+	done := make(chan loopAction, 1)
+	go func() {
+		done <- pollAndRecord(context.Background(), ml, mr, cfg, state)
+	}()
+
+	<-recording
+	assert.False(t, state.session.Request(), "a request made during a recording must be refused")
+	close(release)
+
+	assert.Equal(t, continueLoop, <-done)
+	assert.Equal(t, session.Idle, state.session.State(), "no request should be left over after the session")
+}
+
+func TestPollAndRecord_ExpiredRequestDoesNotRecordOutsideWindow(t *testing.T) {
+	// monday 10:00 UTC — outside the hardcoded window
+	fixedTime := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
+
+	var recorded atomic.Bool
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+		},
+	}
+	mr := &mockStreamRecorder{
+		recordFn: func(_ context.Context, _ *recorder.Stream) (string, error) {
+			recorded.Store(true)
+			return testRecordedPath, nil
+		},
+	}
+	cfg := runConfig{
+		schedule:     true,
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        func() time.Time { return fixedTime },
+	}
+
+	clock := fixedTime
+	sess := session.NewController(30*time.Minute, func() time.Time { return clock })
+	state := newRecordingState(sess)
+	require.True(t, sess.Request())
+
+	// the request expires between the poll accepting it and the stream arriving
+	ml.listenFn = func(_ context.Context) (*recorder.Stream, error) {
+		clock = fixedTime.Add(31 * time.Minute)
+		return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("test"))}, nil
+	}
+
+	assert.Equal(t, continueLoop, pollAndRecord(context.Background(), ml, mr, cfg, state))
+
+	assert.False(t, recorded.Load(), "an expired request must not start a recording outside the window")
+	assert.Equal(t, session.Idle, sess.State())
+}
+
+func TestPollAndRecord_RequestSurvivesStreamWithoutAudio(t *testing.T) {
+	// the real recorder, so the point at which a session becomes a recording is the one under
+	// test rather than something a mock decides
+	dir := t.TempDir()
+	sess := session.NewController(30*time.Minute, time.Now)
+	rec := recorder.NewRecorder(dir, sess.Started)
+
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			return &recorder.Stream{
+				Number: "999",
+				Body:   io.NopCloser(iotest.ErrReader(errors.New("connection reset"))),
+			}, nil
+		},
+	}
+	cfg := runConfig{
+		schedule:     true,
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        func() time.Time { return time.Date(2026, 3, 24, 12, 0, 0, 0, time.UTC) }, // outside the window
+	}
+
+	state := newRecordingState(sess)
+	require.True(t, sess.Request())
+
+	assert.Equal(t, continueLoop, pollAndRecord(context.Background(), ml, rec, cfg, state))
+
+	assert.True(t, sess.Requested(), "a session that never wrote audio must hand the request back")
+	assert.Equal(t, session.Pending, sess.State())
 }
