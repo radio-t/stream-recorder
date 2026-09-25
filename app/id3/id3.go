@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // TextFrame builds an ID3v2.4 text frame (UTF-8 encoding).
@@ -215,6 +216,8 @@ func ReadTLEN(filePath string) int64 {
 }
 
 // findTLEN scans ID3 tag frame data for TLEN and returns duration in seconds.
+// ID3v2.4 lets a text frame end with a NUL terminator, and ffmpeg writes TLEN that way when
+// it rebuilds a tag, so the terminator is dropped before the value is parsed.
 func findTLEN(buf []byte) int64 {
 	for len(buf) >= 10 {
 		frameID := string(buf[0:4])
@@ -223,7 +226,8 @@ func findTLEN(buf []byte) int64 {
 			return 0
 		}
 		if frameID == "TLEN" && sz > 1 {
-			if ms, err := strconv.ParseInt(string(buf[11:10+sz]), 10, 64); err == nil {
+			text := strings.TrimRight(string(buf[11:10+sz]), "\x00")
+			if ms, err := strconv.ParseInt(text, 10, 64); err == nil {
 				return ms / 1000 //nolint:mnd
 			}
 		}
