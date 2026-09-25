@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -52,15 +51,21 @@ type ScheduleStatus struct {
 	ShowMinutes int    // minutes until show start, 0 when show is in progress or outside window
 }
 
+// RecordSession reports and drives the recording lifecycle shared with the recording loop.
+type RecordSession interface {
+	Request() bool   // accept a manual recording request, false when one cannot be accepted now
+	Busy() bool      // a recording is requested, starting or in progress
+	Recording() bool // audio is being written
+}
+
 // Server is the main struct for the server
 type Server struct {
 	dir            string
 	srv            *http.Server
 	template       *template.Template
 	warnCapacity   int
-	authPasswd     string // bcrypt hash; empty means auth disabled
-	forceRecord    *atomic.Bool
-	recording      *atomic.Bool
+	authPasswd     string                // bcrypt hash; empty means auth disabled
+	session        RecordSession         // nil disables POST /record and the live stream
 	scheduleStatus func() ScheduleStatus // nil when schedule is disabled
 	done           chan struct{}
 	closeOnce      sync.Once
@@ -68,10 +73,10 @@ type Server struct {
 
 // NewServer creates a new server and sets up handlers.
 // authPasswd is a bcrypt hash; when non-empty, POST /record requires authentication.
-// forceRecord is an optional flag shared with the recording loop; POST /record sets it to true.
-// recording is an optional flag indicating whether a stream is currently being recorded.
+// sess is the recording lifecycle shared with the recording loop; when nil, POST /record is
+// not registered and the live stream reports nothing is being recorded.
 // scheduleFn, when non-nil, provides the current recording window status for the UI.
-func NewServer(port, dir, authPasswd string, forceRecord, recording *atomic.Bool, scheduleFn func() ScheduleStatus) *Server {
+func NewServer(port, dir, authPasswd string, sess RecordSession, scheduleFn func() ScheduleStatus) *Server {
 	t, err := template.ParseFS(indexTemplateFS, "static/index.html")
 	if err != nil {
 		panic(fmt.Sprintf("failed to parse index template: %v", err))
@@ -82,8 +87,7 @@ func NewServer(port, dir, authPasswd string, forceRecord, recording *atomic.Bool
 		template:       t,
 		warnCapacity:   80, //nolint:mnd
 		authPasswd:     authPasswd,
-		forceRecord:    forceRecord,
-		recording:      recording,
+		session:        sess,
 		scheduleStatus: scheduleFn,
 		done:           make(chan struct{}),
 	}
@@ -94,7 +98,7 @@ func NewServer(port, dir, authPasswd string, forceRecord, recording *atomic.Bool
 	router.HandleFunc("GET /live/{filename...}", s.LiveStreamHandler)
 	router.HandleFunc("GET /health", s.HealthHandler)
 	router.HandleFunc("GET /{$}", s.IndexHandler)
-	if forceRecord != nil {
+	if sess != nil {
 		recordHandler := http.HandlerFunc(s.ForceRecordHandler)
 		if authPasswd != "" {
 			// apply rate limiter (1 req/sec) to prevent brute force when auth is enabled
@@ -204,7 +208,7 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
-	recording := s.recording != nil && s.recording.Load()
+	recording, waiting := s.sessionStatus()
 
 	var activeFile, activeEpisode string
 	if recording && len(episodes) > 0 {
@@ -233,9 +237,9 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 		ShowMinutes     int
 	}{
 		Episodes:        episodes,
-		ShowForceRecord: s.forceRecord != nil,
+		ShowForceRecord: s.session != nil,
 		Recording:       recording,
-		RecordRequested: s.forceRecord != nil && s.forceRecord.Load(),
+		RecordRequested: waiting,
 		ActiveFile:      activeFile,
 		ActiveEpisode:   activeEpisode,
 		AuthEnabled:     s.authPasswd != "",
@@ -255,14 +259,31 @@ func (s *Server) IndexHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-// ForceRecordHandler sets the force-record flag to trigger recording outside the schedule window.
+// sessionStatus reports what the index page needs from the recording lifecycle.
+// waiting covers a session that has begun but has not written audio yet: it is neither idle nor
+// recording, and the UI has to show it as busy, since the button would be refused and the page
+// needs to keep refreshing until the session either produces audio or gives up.
+func (s *Server) sessionStatus() (recording, waiting bool) {
+	if s.session == nil {
+		return false, false
+	}
+	recording = s.session.Recording()
+	return recording, s.session.Busy() && !recording
+}
+
+// ForceRecordHandler requests a recording outside the schedule window.
 // when authPasswd is set, requires valid password via form body or basic auth header.
+// returns 409 when a recording is already requested or running, so a request cannot be
+// queued up behind an active session and start an unintended one later.
 func (s *Server) ForceRecordHandler(w http.ResponseWriter, r *http.Request) {
 	if s.authPasswd != "" && !s.checkAuth(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	s.forceRecord.Store(true)
+	if !s.session.Request() {
+		http.Error(w, "a recording is already requested or in progress", http.StatusConflict)
+		return
+	}
 	slog.Info("force recording triggered via API")
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -421,7 +442,7 @@ func (s *Server) DownloadFileHandler(w http.ResponseWriter, r *http.Request) {
 // LiveStreamHandler streams the currently recording file from its current write position.
 // returns 404 if nothing is being recorded.
 func (s *Server) LiveStreamHandler(w http.ResponseWriter, r *http.Request) {
-	if s.recording == nil || !s.recording.Load() {
+	if s.session == nil || !s.session.Recording() {
 		http.Error(w, "not recording", http.StatusNotFound)
 		return
 	}
@@ -488,7 +509,7 @@ func (s *Server) tailFile(f *os.File, w http.ResponseWriter, r *http.Request, fl
 			continue
 		case readErr != io.EOF:
 			return // real read error
-		case s.recording == nil || !s.recording.Load():
+		case s.session == nil || !s.session.Recording():
 			return // recording finished, file is complete
 		}
 

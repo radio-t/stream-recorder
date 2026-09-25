@@ -68,11 +68,12 @@ Some public Icecast streams suitable for testing:
 
 ## Architecture
 
-The codebase is split into four packages, each with a single responsibility:
+The codebase is split into five packages, each with a single responsibility:
 
 - **recorder** — stream capture: `Client` fetches episode metadata from the Radio-T API and the raw audio stream, `Listener` combines the two calls into a `Stream`, and `Recorder` writes the body to disk as `rt{episode}_{datetime}.mp3` with an ID3v2 header
 - **chapters** — chapter markers: `NewsClient` polls the news API for active topic changes, `ChapterTracker` collects chapter entries during a recording, and `InjectChapters` rewrites the finished MP3 with ID3v2 CHAP/CTOC frames
 - **server** — HTTP server with web UI, health check, episode download/playback, live streaming, and the `POST /record` endpoint
+- **session** — the recording lifecycle shared by the server and the run loop: whether a manual recording is waiting, starting or in progress
 - **main** (app/) — CLI wiring, run loop, and schedule window check
 
 The main loop polls every 5 seconds. When the API reports a live stream, it records until the stream ends or the context is cancelled.
@@ -81,7 +82,7 @@ The main loop polls every 5 seconds. When the API reports a live stream, it reco
 
 When `--schedule` is set, recording only happens inside a fixed time window around the [Radio-T show](https://radio-t.com/online/): Saturday 18:00 to Sunday 00:00 UTC (2 hours before and 4 hours after the 20:00 UTC start). Outside this window the recorder sleeps and skips polling.
 
-A manual recording can be triggered at any time via the `POST /record` endpoint or the button on the web UI, which overrides the schedule for one session.
+A manual recording can be triggered at any time via the `POST /record` endpoint or the button on the web UI, which overrides the schedule for one session. The request is only accepted while the recorder is idle, so a second request, or one made during a recording, is refused with `409 Conflict` rather than queued behind the running session. An accepted request waits up to 30 minutes for a stream to appear and is dropped after that, so it cannot start a recording hours later.
 
 ### Chapter markers
 
@@ -102,7 +103,7 @@ When `--port` is provided, the server exposes:
 - `GET /episode/<name>` - download entire episode directory as ZIP archive
 - `GET /episode/<name>/<file>` - play or download a single recording (`?download` forces download)
 - `GET /live/<filename>` - stream the active recording from the current write position
-- `POST /record` - trigger an immediate recording session (overrides schedule window)
+- `POST /record` - trigger an immediate recording session (overrides schedule window), `409` if one is already requested or running
 
 ### Authentication
 

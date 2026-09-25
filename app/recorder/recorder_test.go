@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -250,6 +252,49 @@ func TestRecorderStreamFailureBeforeAudioRemovesFile(t *testing.T) {
 
 	_, statErr := os.Stat(filepath.Join(dir, "testrecord"))
 	assert.True(t, os.IsNotExist(statErr), "empty episode directory should be removed")
+}
+
+func TestRecorderOnReadyFiresOnFirstAudio(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body func() io.ReadCloser
+		want int32
+	}{
+		{
+			name: "stream delivers audio",
+			body: func() io.ReadCloser { return io.NopCloser(strings.NewReader("some audio data")) },
+			want: 1,
+		},
+		{
+			name: "stream fails before any audio",
+			body: func() io.ReadCloser {
+				return io.NopCloser(iotest.ErrReader(errors.New("connection reset")))
+			},
+			want: 0,
+		},
+		{
+			name: "stream ends without audio",
+			body: func() io.ReadCloser { return io.NopCloser(strings.NewReader("")) },
+			want: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var ready atomic.Int32
+			r := recorder.NewRecorder(t.TempDir(), func() { ready.Add(1) })
+			s := recorder.NewStream("rt testrecord", tt.body())
+
+			_, _ = r.Record(context.Background(), s)
+
+			assert.Equal(t, tt.want, ready.Load(),
+				"onReady marks the point where audio reached the file, nothing earlier")
+		})
+	}
 }
 
 func TestRecordingFileName(t *testing.T) {
