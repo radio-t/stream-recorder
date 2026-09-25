@@ -927,6 +927,37 @@ func TestPollAndRecord_ExpiredRequestDoesNotRecordOutsideWindow(t *testing.T) {
 	assert.Equal(t, session.Idle, sess.State())
 }
 
+func TestPollAndRecord_RecordingWithAudioSpendsTheRequest(t *testing.T) {
+	// the real recorder again: once audio reaches the file the session is a recording, so the
+	// manual request is spent. if the recorder never signalled that, the session would end in
+	// its starting state, the request would be handed back and the next poll would record again
+	dir := t.TempDir()
+	sess := session.NewController(30*time.Minute, time.Now)
+	rec := recorder.NewRecorder(dir, sess.Started)
+
+	var listens atomic.Int32
+	ml := &mockStreamListener{
+		listenFn: func(_ context.Context) (*recorder.Stream, error) {
+			listens.Add(1)
+			return &recorder.Stream{Number: "999", Body: io.NopCloser(strings.NewReader("some audio data"))}, nil
+		},
+	}
+	cfg := runConfig{
+		schedule:     true,
+		tickInterval: 10 * time.Millisecond,
+		nowFn:        func() time.Time { return time.Date(2026, 3, 24, 12, 0, 0, 0, time.UTC) }, // outside the window
+	}
+
+	state := newRecordingState(sess)
+	require.True(t, sess.Request())
+
+	assert.Equal(t, continueLoop, pollAndRecord(context.Background(), ml, rec, cfg, state))
+	assert.Equal(t, session.Idle, sess.State(), "a recording that wrote audio must spend the request")
+
+	assert.Equal(t, continueLoop, pollAndRecord(context.Background(), ml, rec, cfg, state))
+	assert.Equal(t, int32(1), listens.Load(), "no second recording outside the window once the request is spent")
+}
+
 func TestPollAndRecord_RequestSurvivesStreamWithoutAudio(t *testing.T) {
 	// the real recorder, so the point at which a session becomes a recording is the one under
 	// test rather than something a mock decides
