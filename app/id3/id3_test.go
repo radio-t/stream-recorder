@@ -2,6 +2,7 @@ package id3
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -241,14 +242,77 @@ func TestReadTLEN_NonExistent(t *testing.T) {
 
 func TestFindTLEN(t *testing.T) {
 	t.Parallel()
-	// craft raw frame bytes: TIT2 frame + TLEN frame
-	frames := TextFrame("TIT2", "Test")
-	frames = append(frames, TextFrame("TLEN", "9698763")...)
-	assert.Equal(t, int64(9698), findTLEN(frames), "should find TLEN in frame sequence")
+
+	tests := []struct {
+		name string
+		tlen string
+		want int64
+	}{
+		{name: "plain value, as InjectFrames writes it", tlen: "9698763", want: 9698},
+		{name: "NUL-terminated value, as an ffmpeg remux writes it", tlen: "11220208\x00", want: 11220},
+		{name: "not a number", tlen: "abc", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			frames := TextFrame("TIT2", "Test")
+			frames = append(frames, TextFrame("TLEN", tt.tlen)...)
+			assert.Equal(t, tt.want, findTLEN(frames))
+		})
+	}
+}
+
+func TestReadTLEN_FfmpegShapedTag(t *testing.T) {
+	t.Parallel()
+
+	// the frame layout and padding an ffmpeg remux leaves: NUL-terminated text frames, the encoder
+	// tag after TLEN and ten bytes of padding at the end
+	frames := make([]byte, 0, 128)
+	frames = append(frames, TextFrame("TIT2", "Radio-T 1028\x00")...)
+	frames = append(frames, TextFrame("TLEN", "11220208\x00")...)
+	frames = append(frames, TextFrame("TSSE", "Lavf62.3.100\x00")...)
+	frames = append(frames, make([]byte, 10)...)
+
+	var buf bytes.Buffer
+	require.NoError(t, WriteHeader(&buf, frames))
+	buf.WriteString("fake-audio-data")
+	filePath := filepath.Join(t.TempDir(), "rt1028.mp3")
+	require.NoError(t, os.WriteFile(filePath, buf.Bytes(), 0o600))
+
+	assert.Equal(t, int64(11220), ReadTLEN(filePath), "3h07m, not 0 and not a size estimate")
 }
 
 func TestFindTLEN_Empty(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, int64(0), findTLEN(nil))
 	assert.Equal(t, int64(0), findTLEN([]byte{}))
+}
+
+func TestInjectFramesContext_Cancelled(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "test.mp3")
+
+	var buf bytes.Buffer
+	origFrames := TextFrame("TIT2", "Original")
+	require.NoError(t, WriteHeader(&buf, origFrames))
+	buf.WriteString("fake-audio-data-12345")
+	original := buf.Bytes()
+	require.NoError(t, os.WriteFile(filePath, original, 0o600))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := InjectFramesContext(ctx, filePath, TextFrame("TLEN", "9690000"))
+
+	require.ErrorIs(t, err, context.Canceled)
+
+	got, readErr := os.ReadFile(filePath) //nolint:gosec // test file
+	require.NoError(t, readErr)
+	assert.Equal(t, original, got, "the original file must be left untouched")
+
+	entries, readErr := os.ReadDir(dir)
+	require.NoError(t, readErr)
+	assert.Len(t, entries, 1, "the temporary file should be removed")
 }
